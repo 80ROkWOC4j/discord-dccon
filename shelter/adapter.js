@@ -1,5 +1,5 @@
 function createAdapter(shelter, native, webpack) {
-  const styles = new Map(), patches = new Set();
+  const styles = new Map();
   const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
   const store = shelter.plugin.store;
   const localeListeners = new Set();
@@ -23,19 +23,6 @@ function createAdapter(shelter, native, webpack) {
     store.dcconData = clone(native.initialData);
     store.dcconImported = true;
     shelter.plugin.flushStore();
-  }
-  function findInTree(tree, predicate, {walkable = ['children', 'props']} = {}) {
-    const seen = new Set();
-    function walk(value) {
-      if (!value || typeof value !== 'object' || seen.has(value)) return;
-      seen.add(value);
-      if (predicate(value)) return value;
-      for (const child of Array.isArray(value) ? value : walkable.map(key => value[key])) {
-        const found = walk(child);
-        if (found) return found;
-      }
-    }
-    return walk(tree);
   }
   const fs = Object.fromEntries(['readFile', 'writeFile', 'mkdir', 'rename', 'unlink'].map(method => [method, (...args) => {
     const callback = args.pop();
@@ -71,7 +58,9 @@ function createAdapter(shelter, native, webpack) {
     } finally {activeRequests.delete(id); signal?.removeEventListener('abort', abort);}
   }
   const BdApi = {
-    React: shelter.React, ReactDOM: shelter.ReactDOM,
+    React: shelter.React,
+    ReactDOM: {...shelter.ReactDOM, createRoot: (...args) => shelter.ReactDOMClient.createRoot(...args)},
+    ReactUtils: {getInternalInstance: element => shelter.util.getFiber(element)},
     Webpack: {...webpack,
       getModule(filter, options) {
         // Generic get/post/put/del exports also match low-level HTTP clients.
@@ -98,7 +87,6 @@ function createAdapter(shelter, native, webpack) {
       save(_, key, value) {store.dcconData = {...clone(store.dcconData), [key]: clone(value)}; shelter.plugin.flushStore();},
     },
     Net: {fetch: fetchNative}, Logger: {error: (...args) => console.error('[discord-dccon shelter]', ...args)},
-    Utils: {findInTree},
     UI: {showToast: (content, options = {}) => shelter.ui.showToast({title: 'discord-dccon', content,
       duration: options.timeout || 4000,
       color: shelter.ui.ToastColors[options.type === 'error' ? 'CRITICAL' : options.type === 'success' ? 'SUCCESS' : 'INFO']})},
@@ -106,23 +94,12 @@ function createAdapter(shelter, native, webpack) {
       addStyle(id, css) {BdApi.DOM.removeStyle(id); styles.set(id, shelter.ui.injectCss(css));},
       removeStyle(id) {styles.get(id)?.(); styles.delete(id);},
     },
-    Patcher: {
-      after(_, target, key, callback) {
-        const unpatch = shelter.patcher.after(key, target, function(args, result) {
-          return callback(this, args, result) ?? result;
-        });
-        patches.add(unpatch);
-        return unpatch;
-      },
-      unpatchAll() {for (const dispose of patches) dispose(); patches.clear();},
-    },
   };
   return {BdApi, requireNative, dispose() {
     disposed = true;
     for (const id of activeRequests) native.abort(id);
     activeRequests.clear();
     localeObserver?.disconnect(); localeListeners.clear();
-    BdApi.Patcher.unpatchAll();
     for (const id of styles.keys()) BdApi.DOM.removeStyle(id);
   }};
 }

@@ -1,10 +1,10 @@
 // This expression is evaluated by shelter with its per-plugin API in scope.
 (() => {
-  let plugin, adapter, timer, unmountToolbar, disposed = false;
+  let plugin, adapter, timer, disposed = false;
   function stop() {
     disposed = true;
     clearTimeout(timer);
-    try {unmountToolbar?.(); plugin?.stop();} finally {adapter?.dispose();}
+    try {plugin?.stop();} finally {adapter?.dispose();}
   }
   function start() {
     if (disposed) return;
@@ -17,8 +17,6 @@
       ReactDOM: !!shelter.ReactDOM?.createPortal,
       ReactDOMClient: !!shelter.ReactDOMClient?.createRoot,
       DiscordHTTP: !!shelter.http?._raw && ['get', 'post', 'put', 'del'].every(key => typeof shelter.http._raw[key] === 'function'),
-      Permissions: !!dcconWebpack.getByKeys('computePermissions'),
-      PermissionConstants: !!dcconWebpack.getByKeys('ADD_REACTIONS'),
     };
     if (Object.values(checks).some(value => !value)) {
       // Channel modules may load only after login / opening a conversation.
@@ -40,15 +38,12 @@
       }
       adapter = createAdapter(shelter, DCConNative, dcconWebpack);
       const exported = {exports: {}};
-      new Function('BdApi', 'require', 'module', dcconSource + '\nmodule.exports={Plugin:module.exports,Button:DCConButton};')(
+      new Function('BdApi', 'require', 'module', dcconSource)(
         adapter.BdApi, adapter.requireNative, exported);
-      plugin = new exported.exports.Plugin({name: 'discord-dccon', version: dcconVersion});
-      plugin.patchChannelTextArea = () => {
-        unmountToolbar = mountToolbar(shelter, exported.exports.Button);
-      };
+      plugin = new exported.exports({name: 'discord-dccon', version: dcconVersion});
       plugin.start();
     } catch (error) {
-      try {unmountToolbar?.(); plugin?.stop();} finally {adapter?.dispose();}
+      try {plugin?.stop();} finally {adapter?.dispose();}
       console.error('[discord-dccon shelter]', error);
       shelter.ui.showToast({title: 'discord-dccon 오류', content: error.message, duration: 15000});
     }

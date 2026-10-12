@@ -20,14 +20,14 @@ async function scenario(file, initial, run) {
   const uploads = [];
   const nativeUploads = [];
   let requests = 0;
-  const context = {module: {exports: {}}, window: dom.window, document: dom.window.document, structuredClone, setTimeout, clearTimeout, Blob, File, URL, AbortController, BdApi: {
+  const context = {module: {exports: {}}, window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver, queueMicrotask, structuredClone, setTimeout, clearTimeout, Blob, File, URL, AbortController, BdApi: {
     React, ReactDOM: require('react-dom'),
     // Deliberately return the SAME object, as a cached BetterDiscord store can.
     Data: {load: (name, key) => {assert.equal(name, 'discord-dccon'); return data[key];}, save: (name, key, value) => {assert.equal(name, 'discord-dccon'); data[key] = value;}},
     Net: {fetch: async () => { requests++; return {text: async () => JSON.stringify(pack(42)), arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer}; }},
     UI: {showToast() {}}, Logger: {error: (...args) => { throw Error(args.join(' ')); }},
-    DOM: {addStyle() {}},
-    Webpack: {getByKeys: () => ({locale: 'ko', addChangeListener() {}}), getStore: () => ({getUploads: () => nativeUploads}), getModule: () => ({addFiles: args => { uploads.push(args); nativeUploads.push({id: String(uploads.length), item: args.files[0]}); }}), Filters: {byKeys: () => () => true}},
+    DOM: {addStyle() {}, removeStyle() {}},
+    Webpack: {getByKeys: () => ({locale: 'ko', addChangeListener() {}}), getStore: name => name === 'SelectedChannelStore' ? undefined : {getUploads: () => nativeUploads}, getModule: () => ({addFiles: args => { uploads.push(args); nativeUploads.push({id: String(uploads.length), item: args.files[0]}); }}), Filters: {byKeys: () => () => true}},
   }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8') +
     '\nWebPCache.convert = async bytes => bytes; module.exports = {DCConButton, DCConCategory, DCConSettingsPanel, Plugin: module.exports, DCConPanel, DCConItem, BufferTray: typeof BufferTray === "undefined" ? null : BufferTray, sendDCConMessage, PackThumbnail: typeof PackThumbnail === "undefined" ? null : PackThumbnail, events: PluginEvents, setChannel: id => { currentChannelId = id; }};', context);
@@ -139,14 +139,15 @@ test('pack order controls persist order across remount and picker navigation', a
 test('startup repairs stored duplicates once and retains the original data backup', async () => {
   await scenario('discord-dccon.plugin.js', [pack(42), pack('42'), pack(99)], async ({data, Plugin}) => {
     const plugin = new Plugin({name: 'discord-dccon'});
-    plugin.patchChannelTextArea = () => {};
     plugin.start();
     assert.equal(data.dccons.length, 2);
     assert.equal(data.dcconsBeforeDedup.length, 3);
     const backup = JSON.stringify(data.dcconsBeforeDedup);
+    plugin.stop();
     plugin.start();
     assert.equal(data.dccons.length, 2);
     assert.equal(JSON.stringify(data.dcconsBeforeDedup), backup);
+    plugin.stop();
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * @name discord-dccon
  * @description 디스코드에서 디시콘을 쉽게 사용할 수 있게 도와주는 플러그인입니다.
- * @version 3.5.0
+ * @version 3.5.1
  * @author 80ROkWOC4j
  * @website https://github.com/80ROkWOC4j/discord-dccon
  * @source https://github.com/80ROkWOC4j/discord-dccon
@@ -58,14 +58,6 @@ const PluginEvents = {
   },
 };
 const LocaleStore = BdApi.Webpack.getByKeys("locale", "initialize");
-const ChannelTextArea = BdApi.Webpack.getModule((m) =>
-  m?.type?.render?.toString?.()?.includes?.("CHANNEL_TEXT_AREA")
-);
-const Permissions = BdApi.Webpack.getByKeys("computePermissions");
-const PermissionsConstants = BdApi.Webpack.getModule(
-  BdApi.Webpack.Filters.byKeys("ADD_REACTIONS"),
-  { searchExports: true }
-);
 
 const classes = {
   icon: BdApi.Webpack.getByKeys("icon", "active", "buttonWrapper") ?? {},
@@ -73,6 +65,65 @@ const classes = {
 };
 
 let currentChannelId = "";
+
+// Both installations mount the picker beside the native composer controls.
+function mountToolbar(Button) {
+  const roots = new Map();
+  const store = BdApi.Webpack.getStore("SelectedChannelStore");
+  let pending = false, stopped = false;
+  function channelFor(editor) {
+    for (let fiber = BdApi.ReactUtils.getInternalInstance(editor); fiber; fiber = fiber.return) {
+      const channel = fiber.memoizedProps?.channel;
+      if (channel?.id) return channel.id;
+    }
+    return store?.getChannelId?.();
+  }
+  function update() {
+    pending = false;
+    if (stopped) return;
+    const active = new Set();
+    for (const editor of document.querySelectorAll('[role="textbox"][contenteditable="true"]')) {
+      const composer = editor.closest('[class*="channelTextArea"]');
+      const toolbar = composer?.querySelector('[class*="buttons_"]');
+      const channelId = channelFor(editor);
+      if (!toolbar || !channelId) continue;
+      active.add(toolbar);
+      let entry = roots.get(toolbar);
+      if (entry && !toolbar.contains(entry.host)) {
+        entry.root.unmount(); roots.delete(toolbar); entry = null;
+      }
+      if (!entry) {
+        const host = document.createElement("div");
+        host.className = "dccon-toolbar-host";
+        host.style.cssText = "display:flex;align-items:center;flex:0 0 auto";
+        toolbar.append(host);
+        entry = {host, root: BdApi.ReactDOM.createRoot(host)};
+        roots.set(toolbar, entry);
+      }
+      if (entry.channelId !== channelId) {
+        entry.channelId = channelId;
+        entry.root.render(BdApi.React.createElement(Button, {channelId}));
+      }
+    }
+    for (const [toolbar, entry] of roots) if (!active.has(toolbar)) {
+      entry.root.unmount(); entry.host.remove(); roots.delete(toolbar);
+    }
+  }
+  function schedule() {
+    if (pending || stopped) return;
+    pending = true;
+    queueMicrotask(update);
+  }
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.body, {childList: true, subtree: true});
+  store?.addChangeListener(schedule);
+  update();
+  return () => {
+    stopped = true; observer.disconnect(); store?.removeChangeListener(schedule);
+    for (const entry of roots.values()) {entry.root.unmount(); entry.host.remove();}
+    roots.clear();
+  };
+}
 
 // 다국어 처리를 위한 번역 리소스
 const translations = {
@@ -1957,7 +2008,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
       h("p", null, "진단은 자동으로 제출되지 않으며, 메시지를 보내거나 입력 중인 내용을 변경하지 않습니다."),
       h(Button, { text: this.state.diagnosticReport ? "진단 정보 새로고침" : "진단 정보 만들기", onClick: () => {
         const report = inspectInstantSend();
-        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "3.5.0", generatedAt: new Date().toISOString(), ...report }, null, 2),
+        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "3.5.1", generatedAt: new Date().toISOString(), ...report }, null, 2),
           copyStatus: "" });
       } }),
       this.state.diagnosticReport && h("div", null,
@@ -2066,7 +2117,7 @@ module.exports = class DCCon {
 
     warmCache(repairedPacks.flatMap(pack => pack.detail));
     if (Embedding.enabled()) void Embedding.start();
-    this.patchChannelTextArea();
+    this.unmountToolbar = mountToolbar(DCConButton);
 
 
     BdApi.DOM.addStyle(this.meta.name, this.css);
@@ -2084,53 +2135,10 @@ module.exports = class DCCon {
     this.localeListener = null;
     Embedding.stop();
     WebPCache.stop();
-    BdApi.Patcher.unpatchAll(this.meta.name);
+    this.unmountToolbar?.();
+    this.unmountToolbar = null;
     PluginEvents.dispatch({ type: "DCCON_UNPATCH_ALL" });
     BdApi.DOM.removeStyle(this.meta.name);
-  }
-
-  patchChannelTextArea() {
-    BdApi.Patcher.after(
-      this.meta.name,
-      ChannelTextArea.type,
-      "render",
-      (_, [props], returnValue) => {
-        const isProfilePopout = BdApi.Utils.findInTree(
-          returnValue,
-          (e) =>
-            Array.isArray(e?.value) &&
-            e.value.some((v) => v === "bite size profile popout"),
-          { walkable: ["children", "props"] }
-        );
-        if (isProfilePopout) return;
-
-        const chatBar = BdApi.Utils.findInTree(
-          returnValue,
-          (e) =>
-            Array.isArray(e?.children) &&
-            e.children.some((c) =>
-              c?.props?.className?.startsWith("attachButton")
-            ),
-          { walkable: ["children", "props"] }
-        );
-        if (!chatBar) return;
-
-
-        const channel = props.channel;
-        const perms = Permissions.can(
-          PermissionsConstants.SEND_MESSAGES,
-          channel
-        );
-        if (!channel.type && !perms) return;
-
-        chatBar.children.push(
-          BdApi.React.createElement(DCConButton, {
-            pickerType: props.type,
-            channelId: props.channel.id,
-          })
-        );
-      }
-    );
   }
 
   get css() {
@@ -2152,8 +2160,8 @@ module.exports = class DCCon {
 .dccon-popover button, .dccon-settings-panel button { border: 0; cursor: pointer; }
 .dccon-popover button:disabled, .dccon-settings-panel button:disabled { opacity: .5; cursor: default; }
 .dccon-popover button:focus-visible, .dccon-settings-panel button:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: -2px; }
-.dccon-trigger { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 8px; border: 0; background: transparent; cursor: pointer; color: var(--interactive-normal, #b5bac1); }
-.dccon-trigger:hover, .dccon-trigger[aria-expanded="true"] { color: var(--interactive-active, #fff); }
+.dccon-trigger { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 8px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; color: var(--interactive-normal, #b5bac1); }
+.dccon-trigger:hover, .dccon-trigger:focus-visible, .dccon-trigger[aria-expanded="true"] { color: var(--interactive-active, #fff); background: var(--background-modifier-hover, #ffffff12); }
 .dccon-buttonContainer { margin-left: 8px; }
 .dccon-overlay { position: fixed; inset: 0; z-index: 10000; }
 .dccon-popover { position: fixed; width: min(520px, calc(100vw - 16px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-subtle, #80808033); border-radius: 8px; box-shadow: 0 8px 32px #0006; }

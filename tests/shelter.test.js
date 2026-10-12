@@ -119,25 +119,6 @@ test('image sends use shelter Discord REST, never an ambiguous HTTP export', asy
   assert.equal(imageAttempt.hasMessageId, true);
 });
 
-test('shelter patch adapter preserves this, arguments, results and unpatches', () => {
-  const target = {value: 2, method(n) {return this.value + n;}};
-  const original = target.method;
-  const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}, patcher: {
-    after(key, object, callback) {
-      const fn = object[key];
-      object[key] = function(...args) {const result = fn.apply(this, args); return callback.call(this, args, result) ?? result;};
-      return () => {object[key] = fn;};
-    },
-  }};
-  const adapter = createAdapter(shelter, {initialData: {}}, {});
-  adapter.BdApi.Patcher.after('discord-dccon', target, 'method', (self, args, result) => {
-    assert.equal(self, target); assert.deepEqual(args, [3]); assert.equal(result, 5);
-  });
-  assert.equal(target.method(3), 5);
-  adapter.dispose();
-  assert.equal(target.method, original);
-});
-
 test('adapter disposal aborts old downloads without reusing IDs after restart', async () => {
   const requests = [], aborted = [];
   const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
@@ -203,9 +184,8 @@ test('plugin starts after first-store retry without PoC status APIs and cleans u
     console, dcconVersion: '3.0.0', DCConNative: {},
     dcconWebpack: {getByKeys: () => ({})},
     setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {},
-    createAdapter: () => ({BdApi: {}, requireNative() {}, dispose: () => events.push('dispose')}),
-    mountToolbar: () => {events.push('mount'); return () => events.push('unmount');},
-    dcconSource: 'module.exports=class {start(){this.patchChannelTextArea();} stop(){}}; const DCConButton=()=>{};',
+    createAdapter: () => ({BdApi: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
+    dcconSource: 'module.exports=class {start(){BdApi.mount();} stop(){BdApi.unmount();}};',
     shelter: {React: {createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
       http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
       plugin: {id: 'discord-dccon', flushStore() {
@@ -297,90 +277,5 @@ test('preload injects only the configured channel main frame and always loads or
       assert.equal(requireNative('electron').clipboard.readText(), 'clipboard-url');
       assert.equal(reads, 1);
     } else assert.equal(bridge, undefined);
-  }
-});
-
-test('unchanged DCCon starts through shelter adapter, opens picker and cleans up', async () => {
-  const {JSDOM} = require('jsdom');
-  const React = require('react'), ReactDOM = require('react-dom');
-  const dom = new JSDOM('<div id="root"></div>');
-  const previous = {window: global.window, document: global.document, act: global.IS_REACT_ACT_ENVIRONMENT, observer: global.MutationObserver};
-  global.window = dom.window; global.document = dom.window.document; global.IS_REACT_ACT_ENVIRONMENT = true;
-  global.MutationObserver = dom.window.MutationObserver;
-  const {createRoot} = require('react-dom/client');
-  const root = createRoot(document.getElementById('root'));
-  const target = {};
-  const webpack = captureWebpack(target);
-  const channel = {type: {render() {
-    const CHANNEL_TEXT_AREA = {props: {children: [{props: {className: 'attachButton-test'}}]}};
-    return CHANNEL_TEXT_AREA;
-  }}};
-  const original = channel.type.render;
-  const listeners = new Set();
-  const exports = [channel, {locale() {}, initialize() {}},
-    {locale: 'ko', initialize() {}, addChangeListener: fn => listeners.add(fn), removeChangeListener: fn => listeners.delete(fn)},
-    {computePermissions() {}, can: () => true}, {ADD_REACTIONS: 1, SEND_MESSAGES: 2}, {addFiles() {}}];
-  target.webpackChunkdiscord_app.push = chunk => Object.values(chunk[1]).forEach(factory => factory({exports: {}}));
-  target.webpackChunkdiscord_app.push([[1], Object.fromEntries(exports.map((value, id) => [id, module => {module.exports = value;}]))]);
-  const shelter = {React, ReactDOM, plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}},
-    ui: {injectCss(css) {const style = document.createElement('style'); style.textContent = css; document.head.append(style); return () => style.remove();}},
-    patcher: {after(key, object, callback) {const fn = object[key]; object[key] = function(...args) {
-      return callback.call(this, args, fn.apply(this, args));
-    }; return () => {object[key] = fn;};}},
-  };
-  const adapter = createAdapter(shelter, {initialData: {dccons: [], embeddingEnabled: false}}, webpack);
-  const module = {exports: {}};
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
-  vm.runInNewContext(source, {module, BdApi: adapter.BdApi, require: adapter.requireNative,
-    window, document, structuredClone, setTimeout, clearTimeout});
-  const plugin = new module.exports({name: 'discord-dccon'});
-  try {
-    plugin.start();
-    assert.equal(adapter.BdApi.Webpack.getByKeys('locale', 'initialize').locale, navigator.language);
-    const tree = channel.type.render({channel: {id: 'test', type: 0}, type: 'normal'});
-    await React.act(async () => root.render(tree.props.children.at(-1)));
-    const button = document.querySelector('.dccon-trigger');
-    assert.ok(button);
-    await React.act(async () => button.dispatchEvent(new window.MouseEvent('click', {bubbles: true})));
-    assert.ok(document.querySelector('.dccon-search-input'));
-    await React.act(async () => plugin.stop());
-    assert.equal(listeners.size, 0);
-    assert.equal(channel.type.render, original);
-    assert.equal(document.querySelector('.dccon-overlay'), null);
-    assert.equal(document.querySelector('style'), null);
-  } finally {
-    await React.act(async () => root.unmount()); adapter.dispose(); dom.window.close();
-    global.window = previous.window; global.document = previous.document; global.IS_REACT_ACT_ENVIRONMENT = previous.act;
-    global.MutationObserver = previous.observer;
-  }
-});
-
-test('shelter toolbar mounts once, follows channel changes, and removes disconnected roots', async () => {
-  const {JSDOM} = require('jsdom');
-  const {mountToolbar} = require('../shelter/toolbar');
-  const dom = new JSDOM('<div class="channelTextArea_test"><div role="textbox" contenteditable="true"></div><div class="buttons_test"></div></div>');
-  const previous = {document: global.document, MutationObserver: global.MutationObserver};
-  global.document = dom.window.document; global.MutationObserver = dom.window.MutationObserver;
-  let channel = 'one', listener, renders = 0, unmounts = 0;
-  const shelter = {React: {createElement: (_, props) => props}, util: {getFiber: () => null},
-    flux: {storesFlat: {SelectedChannelStore: {
-      getChannelId: () => channel, addChangeListener: fn => {listener = fn;}, removeChangeListener: () => {listener = null;},
-    }}},
-    ReactDOMClient: {createRoot: host => ({render(props) {renders++; host.textContent = props.channelId;}, unmount() {unmounts++;}})},
-  };
-  let dispose;
-  try {
-    dispose = mountToolbar(shelter, () => {});
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(renders, 1);
-    assert.equal(document.querySelectorAll('.dccon-shelter-host').length, 1);
-    channel = 'two'; listener(); await new Promise(resolve => setImmediate(resolve));
-    assert.equal(document.querySelector('.dccon-shelter-host').textContent, 'two');
-    document.querySelector('.channelTextArea_test').remove();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(unmounts, 1);
-    dispose(); dispose = null; assert.equal(listener, null);
-  } finally {
-    dispose?.(); dom.window.close(); global.document = previous.document; global.MutationObserver = previous.MutationObserver;
   }
 });

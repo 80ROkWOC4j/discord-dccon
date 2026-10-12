@@ -15,7 +15,7 @@ async function main() {
   const read = name => fs.readFile(path.join(__dirname, name), 'utf8');
   const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
   const version = JSON.parse(await fs.readFile(path.resolve(__dirname, '../package.json'), 'utf8')).version;
-  const plugin = `(function(){\n${await read('adapter.js')}\n${await read('toolbar.js')}\nconst dcconSource=${JSON.stringify(source)}, dcconVersion=${JSON.stringify(version)};\nreturn (\n${await read('plugin.js')}\n);\n})()`;
+  const plugin = `(function(){\n${await read('adapter.js')}\nconst dcconSource=${JSON.stringify(source)}, dcconVersion=${JSON.stringify(version)};\nreturn (\n${await read('plugin.js')}\n);\n})()`;
   const lifecycle = new Function('shelter', 'return ' + plugin)({});
   if (typeof lifecycle?.onLoad !== 'function' || typeof lifecycle?.onUnload !== 'function') {
     throw Error('Generated shelter plugin has no lifecycle');
