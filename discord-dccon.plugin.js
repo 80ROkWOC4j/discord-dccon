@@ -531,7 +531,7 @@ const WebPCache = {
   },
   workerMain() {
     const tools = new Map();
-    self.onmessage = async ({data: {bytes, kind, runtime, frames, loopCount = 0}}) => {
+    self.onmessage = async ({data: {bytes, kind, runtime, frames, loopCount = 0, compositeGif = false}}) => {
       try {
         if (!tools.has(kind)) {
           const url = URL.createObjectURL(new Blob([runtime.source], {type: "text/javascript"}));
@@ -550,6 +550,26 @@ const WebPCache = {
         let module;
         try {module = await (kind === "gif" ? lib.Gif2Webp : lib.Img2Webp)({locateFile: () => wasmURL});}
         finally {self.fetch = fetch; URL.revokeObjectURL(wasmURL);}
+        if (compositeGif) {
+          // Chromium accepts out-of-bounds GIF rectangles and composites them on the logical screen.
+          const decoder = new ImageDecoder({data: bytes, type: "image/gif"});
+          try {
+            await decoder.tracks.ready;
+            const track = decoder.tracks.selectedTrack;
+            loopCount = Number.isFinite(track.repetitionCount) ? track.repetitionCount + 1 : 0;
+            frames = [];
+            for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
+              const {image} = await decoder.decode({frameIndex});
+              try {
+                const canvas = new OffscreenCanvas(image.displayWidth, image.displayHeight);
+                canvas.getContext("2d").drawImage(image, 0, 0);
+                const png = await canvas.convertToBlob({type: "image/png"});
+                frames.push({bytes: new Uint8Array(await png.arrayBuffer()),
+                  duration: Math.max(1, Math.round((image.duration ?? 100000) / 1000))});
+              } finally {image.close();}
+            }
+          } finally {decoder.close();}
+        }
         module.FS.writeFile("/input", new Uint8Array(bytes));
         const args = frames ? ["-loop", String(loopCount), "-lossless", "-m", "4", ...frames.flatMap((frame, index) => {
           const name = `/frame${index}.png`; module.FS.writeFile(name, frame.bytes);
@@ -557,41 +577,50 @@ const WebPCache = {
         }), "-o", "/output.webp"] : kind === "gif" ? ["-quiet", "-m", "4", "/input", "-o", "/output.webp"]
           : ["-lossless", "-m", "4", "/input", "-o", "/output.webp"];
         const parsed = (kind === "gif" ? lib.parseGif2WebpArgs : lib.parseImg2WebpArgs)(module, args);
-        if (module._main(...parsed) !== 0) throw Error("이미지를 WebP로 변환하지 못했습니다.");
+        if (module._main(...parsed) !== 0) throw Object.assign(Error("이미지를 WebP로 변환하지 못했습니다."),
+          {gifFrameError: kind === "gif"});
         const output = module.FS.readFile("/output.webp");
         self.postMessage({bytes: output.buffer}, [output.buffer]);
-      } catch (error) {self.postMessage({error: error.message || String(error)});}
+      } catch (error) {self.postMessage({error: error.message || String(error), gifFrameError: error.gifFrameError === true});}
     };
   },
   convert(bytes, frames, loopCount = 0) {
     if (isWebP(bytes)) return Promise.resolve(bytes);
     const generation = this.generation;
     const task = this.work.then(async () => {
-      if (generation !== this.generation) throw Error("WebP 변환 중단됨");
+      const encode = async (kind, compositeGif = false) => {
+        if (generation !== this.generation) throw Error("WebP 변환 중단됨");
+        const runtime = await this.runtime(kind, generation);
+        if (generation !== this.generation) throw Error("WebP 변환 중단됨");
+        if (!this.worker) {
+          // Method shorthand needs a function expression when serialized.
+          const source = this.workerMain.toString().replace(/^workerMain\(\)/, "function()");
+          const workerURL = URL.createObjectURL(new Blob([`(${source})()`], {type: "text/javascript"}));
+          try {this.worker = new Worker(workerURL, {type: "module"});} finally {URL.revokeObjectURL(workerURL);}
+          this.workerKinds = new Set();
+        }
+        const worker = this.worker;
+        return new Promise((resolve, reject) => {
+          this.reject = reject;
+          worker.onmessage = ({data}) => {
+            this.reject = null;
+            if (data.error) return reject(Object.assign(Error(data.error), {gifFrameError: data.gifFrameError === true}));
+            const converted = new Uint8Array(data.bytes);
+            if (!isWebP(converted)) return reject(Error("WebP 변환 결과가 올바르지 않습니다."));
+            this.workerKinds.add(kind);
+            resolve(converted);
+          };
+          worker.onerror = () => {this.stop(); reject(Error("WebP 변환기 실행 실패"));};
+          worker.postMessage({bytes, kind, frames, loopCount, compositeGif,
+            runtime: this.workerKinds.has(kind) ? undefined : runtime});
+        });
+      };
       const kind = String.fromCharCode(...bytes.slice(0, 4)) === "GIF8" ? "gif" : "img";
-      const runtime = await this.runtime(kind, generation);
-      if (generation !== this.generation) throw Error("WebP 변환 중단됨");
-      if (!this.worker) {
-        // Method shorthand needs a function expression when serialized.
-        const source = this.workerMain.toString().replace(/^workerMain\(\)/, "function()");
-        const workerURL = URL.createObjectURL(new Blob([`(${source})()`], {type: "text/javascript"}));
-        try {this.worker = new Worker(workerURL, {type: "module"});} finally {URL.revokeObjectURL(workerURL);}
-        this.workerKinds = new Set();
+      try {return await encode(kind);}
+      catch (error) {
+        if (!error.gifFrameError || kind !== "gif") throw error;
+        return encode("img", true);
       }
-      const worker = this.worker;
-      return new Promise((resolve, reject) => {
-        this.reject = reject;
-        worker.onmessage = ({data}) => {
-          this.reject = null;
-          if (data.error) return reject(Error(data.error));
-          const converted = new Uint8Array(data.bytes);
-          if (!isWebP(converted)) return reject(Error("WebP 변환 결과가 올바르지 않습니다."));
-          this.workerKinds.add(kind);
-          resolve(converted);
-        };
-        worker.onerror = () => {this.stop(); reject(Error("WebP 변환기 실행 실패"));};
-        worker.postMessage({bytes, kind, frames, loopCount, runtime: this.workerKinds.has(kind) ? undefined : runtime});
-      });
     });
     this.work = task.catch(() => {});
     return task;
