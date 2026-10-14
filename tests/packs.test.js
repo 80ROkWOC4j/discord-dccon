@@ -30,7 +30,7 @@ async function scenario(file, initial, run) {
     Webpack: {getByKeys: () => ({locale: 'ko', addChangeListener() {}}), getStore: name => name === 'SelectedChannelStore' ? undefined : {getUploads: () => nativeUploads}, getModule: () => ({addFiles: args => { uploads.push(args); nativeUploads.push({id: String(uploads.length), item: args.files[0]}); }}), Filters: {byKeys: () => () => true}},
   }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8') +
-    '\nWebPCache.convert = async bytes => bytes; module.exports = {DCConButton, DCConCategory, DCConSettingsPanel, Plugin: module.exports, DCConPanel, DCConItem, BufferTray: typeof BufferTray === "undefined" ? null : BufferTray, sendDCConMessage, PackThumbnail: typeof PackThumbnail === "undefined" ? null : PackThumbnail, events: PluginEvents, setChannel: id => { currentChannelId = id; }};', context);
+    '\nWebPCache.convert = async bytes => bytes; module.exports = {DCConButton, DCConCategory, DCConSettingsPanel, Plugin: module.exports, DCConPanel, DCConItem, BufferTray: typeof BufferTray === "undefined" ? null : BufferTray, sendDCConMessage, updateQueue, setAnimationTiming: value => {animationTiming = value;}, PackThumbnail: typeof PackThumbnail === "undefined" ? null : PackThumbnail, events: PluginEvents, setChannel: id => { currentChannelId = id; }};', context);
   const {DCConSettingsPanel, Plugin} = context.module.exports;
   const root = createRoot(document.getElementById('root'));
   const ref = React.createRef();
@@ -297,6 +297,34 @@ test('pack collapse persists independently across remounts and pack reordering',
     await render([first, second]);
     assert.deepEqual(headers().map(e => e.getAttribute('aria-expanded')), ['true', 'true']);
     assert.deepEqual(data.collapsedPacks, {});
+    assert.deepEqual(errors, []);
+  });
+});
+
+test('merge button follows animation compatibility and ignores stale asynchronous checks', async () => {
+  await scenario('discord-dccon.plugin.js', [], async ({root, BufferTray, updateQueue, setAnimationTiming, errors}) => {
+    const entry = duration => ({file: Object.assign(new File(['image'], 'dccon.webp'), {duration}), con: {title: '콘'}});
+    setAnimationTiming(async file => ({count: 2, duration: file.duration, loops: Infinity}));
+    const render = async entries => React.act(async () => {updateQueue('merge-ui', entries);});
+    await React.act(async () => root.render(React.createElement(BufferTray, {channelId: 'merge-ui'})));
+    await render([entry(200), entry(200)]);
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, false);
+    await render([entry(200), entry(300)]);
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, true);
+    assert.match(document.querySelector('.dccon-buffer-merge-reason').textContent, /재생 길이/);
+    await render([entry(200), entry(200), entry(200)]);
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, false);
+    await render(Array.from({length: 4}, () => entry(200)));
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, true);
+    const pending = [];
+    setAnimationTiming(() => new Promise(resolve => {pending.push(resolve);}));
+    const shared = entry(200);
+    await render([shared, shared]);
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, true);
+    await render([entry(200)]);
+    await React.act(async () => pending.forEach(resolve => resolve({count: 2, duration: 200, loops: Infinity})));
+    assert.equal(document.querySelector('.dccon-buffer-merge').disabled, true);
+    assert.match(document.querySelector('.dccon-buffer-merge-reason').textContent, /2~3개/);
     assert.deepEqual(errors, []);
   });
 });

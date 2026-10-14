@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function harness({uploadFails = false, postFails = false, missing = false, cleanupFails = false, noAcknowledgement = false, postRejects = false, htmlResponse = false, functionDecoy = false, onUpload, splitImage, cacheDirectory, fetchFails = false, callbackFs = false, cacheWriteFails = false, downloadBytes = [1, 2, 3]} = {}) {
+function harness({uploadFails = false, postFails = false, missing = false, cleanupFails = false, noAcknowledgement = false, postRejects = false, htmlResponse = false, functionDecoy = false, onUpload, splitImage, mergeImage, cacheDirectory, fetchFails = false, callbackFs = false, cacheWriteFails = false, downloadBytes = [1, 2, 3]} = {}) {
   const calls = {staged: 0, posts: [], closes: 0, errors: [], uploads: [], fetches: 0};
   const data = {sendMode: "image", draft: '작성 중인 글', attachments: ['existing'], reply: 'reply-id'};
   class Upload extends EventEmitter {
@@ -65,6 +65,7 @@ function harness({uploadFails = false, postFails = false, missing = false, clean
     // Conversion itself is exercised with real WASM in webp.test.js; send tests use byte fixtures.
     '\nWebPCache.convert = async bytes => bytes; module.exports = {WebPCache, sendDCConMessage, inspectInstantSend, events: PluginEvents, activeQueue, removeBuffered, getDCConImage, setChannel: id => {currentChannelId = id;}};', context);
   if (splitImage) { context.splitImageForTest = splitImage; vm.runInNewContext("splitImageIntoNine = splitImageForTest;", context); }
+  if (mergeImage) { context.mergeImageForTest = mergeImage; vm.runInNewContext("mergeAnimatedImages = mergeImageForTest;", context); }
   const api = context.module.exports;
   api.setChannel('test-channel');
   api.events.subscribe('DCCON_CLOSE', () => calls.closes++);
@@ -161,6 +162,54 @@ test('split preparation locks the buffer and failure preserves its original imag
   assert.equal(await sending, false);
   assert.equal(calls.posts.length, 0);
   assert.equal(api.activeQueue('test-channel').length, 1);
+  assert.equal(calls.closes, 0);
+});
+
+test('merged send uploads one file and records all original cons in selection order', async () => {
+  const merged = new File(['merged'], 'dccon.webp', {type: 'image/webp'});
+  let inputs;
+  const {api, calls, data} = harness({mergeImage: async (files, checkActive) => {checkActive(); inputs = files; return merged;}});
+  const second = {...con, path: 'second'}, third = {...con, path: 'third'};
+  for (const item of [con, second, third]) await api.sendDCConMessage(item, {keepOpen: true});
+  const queued = Array.from(api.activeQueue('test-channel'), entry => entry.file);
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), true);
+  assert.deepEqual(Array.from(inputs), queued);
+  assert.equal(calls.posts[0].body.attachments.length, 1);
+  assert.equal(calls.uploads[0].item.file, merged);
+  assert.equal(api.activeQueue('test-channel').length, 0);
+  assert.deepEqual(Array.from(data.recent, item => item.path), ['third', 'second', 'image']);
+});
+
+test('merged send rejects invalid counts, ordinary clicks and conflicting modes before merging', async () => {
+  let merges = 0;
+  const {api, calls} = harness({mergeImage: async () => {merges++; return new File(['merged'], 'merged.webp');}});
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), false);
+  await api.sendDCConMessage(con, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), false);
+  await api.sendDCConMessage(con, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage(con, {mergeImages: true}), false);
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true, splitNine: true}), false);
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true, keepOpen: true}), false);
+  for (let i = 0; i < 2; i++) await api.sendDCConMessage(con, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), false);
+  assert.equal(merges, 0);
+  assert.equal(calls.posts.length, 0);
+  assert.equal(api.activeQueue('test-channel').length, 4);
+});
+
+test('merge failure keeps the buffer and locks removal and duplicate sends during preparation', async () => {
+  let fail;
+  const {api, calls} = harness({mergeImage: () => new Promise((_, reject) => {fail = reject;})});
+  for (let i = 0; i < 2; i++) await api.sendDCConMessage(con, {keepOpen: true});
+  const sending = api.sendDCConMessage(null, {mergeImages: true});
+  await new Promise(resolve => setImmediate(resolve));
+  api.removeBuffered('test-channel');
+  assert.equal(api.activeQueue('test-channel').length, 2);
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), false);
+  fail(Error('애니메이션 재생 길이가 같아야 합니다.'));
+  assert.equal(await sending, false);
+  assert.equal(api.activeQueue('test-channel').length, 2);
+  assert.equal(calls.uploads.length, 0);
   assert.equal(calls.closes, 0);
 });
 
