@@ -32,88 +32,165 @@ function Install-BetterDiscord([string]$PackageDirectory) {
     Write-Output 'discord-dccon installed. Enable it in Discord Settings > BetterDiscord > Plugins. Existing settings and cache were preserved.'
 }
 
-function Install-Standalone([string]$PackageDirectory) {
+# All standalone installations use desktop_core. App archives and host-mod
+# patchers are preserved; only the current core entry is wrapped.
+function Get-DesktopCoreEntries([string]$VersionDirectory, [string]$DataRoot) {
+    $name = Split-Path $VersionDirectory -Leaf
+    foreach ($modules in @((Join-Path $VersionDirectory 'modules'), (Join-Path $DataRoot ($name + '/modules')), (Join-Path $DataRoot ($name.Substring(4) + '/modules')))) {
+        if (!(Test-Path -LiteralPath $modules)) {continue}
+        foreach ($module in Get-ChildItem -LiteralPath $modules -Directory | Where-Object {$_.Name -match '^discord_desktop_core(?:-\d+)?$'}) {
+            foreach ($file in @((Join-Path $module.FullName 'index.js'), (Join-Path $module.FullName 'discord_desktop_core/index.js'))) {
+                if (Test-Path -LiteralPath $file -PathType Leaf) {$file}
+            }
+        }
+    }
+}
+
+function Test-VencordArchive([string]$Resources, [string]$Archive = '') {
+    if (!(Test-Path -LiteralPath (Join-Path $Resources '_app.asar') -PathType Leaf)) {return $false}
+    $patcher = Join-Path $env:APPDATA 'Vencord/dist/patcher.js'
+    if (!$Archive) {$Archive = Join-Path $Resources 'app.asar'}
+    if (!(Test-Path -LiteralPath $patcher -PathType Leaf) -or !(Test-Path -LiteralPath $archive -PathType Leaf)) {throw 'Incomplete Vencord installation. Repair Vencord first.'}
+    # Official Vencord Installer writes require(JSON.stringify(patcherPath)) into this small ASAR.
+    $text = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($archive))
+    foreach ($match in [regex]::Matches($text, 'require\(("(?:\\.|[^"\\])*")\)')) {
+        try {$target = ConvertFrom-Json -InputObject $match.Groups[1].Value} catch {continue}
+        if ([IO.Path]::IsPathRooted($target) -and
+            [IO.Path]::GetFullPath($target).Equals([IO.Path]::GetFullPath($patcher), [StringComparison]::OrdinalIgnoreCase)) {return $true}
+    }
+    throw 'Unknown app.asar loader beside _app.asar. Only the standard Vencord installer layout is supported.'
+}
+
+function Get-LegacyStandalone([string]$Resources) {
+    $app = Join-Path $Resources 'app'
+    $manifest = Join-Path $app 'discord-dccon-install.json'
+    $original = Join-Path $Resources 'discord-dccon-original.asar'
+    if (!(Test-Path -LiteralPath $manifest) -and !(Test-Path -LiteralPath $original)) {return $null}
+    $asar = Join-Path $Resources 'app.asar'
+    if (!(Test-Path -LiteralPath $manifest -PathType Leaf) -or !(Test-Path -LiteralPath $original -PathType Leaf) -or (Test-Path -LiteralPath $asar)) {
+        throw 'Incomplete or conflicting legacy installation. No files were changed.'
+    }
+    $record = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    $installedChannel = if ($record.channel) {$record.channel} else {'Stable'}
+    if ($record.kind -ne 'discord-dccon-standalone' -or $installedChannel -ne $Channel -or
+        (Get-FileHash -LiteralPath $original).Hash -ne $record.originalHash) {throw 'Legacy installation record or original archive changed. No files were changed.'}
+    foreach ($file in @('index.js', 'package.json')) {
+        if ((Get-FileHash -LiteralPath (Join-Path $app $file)).Hash -ne $record.$file) {throw "Modified legacy loader: $file. No files were changed."}
+    }
+    return @{app=$app;original=$original;asar=$asar;archive=(Join-Path $Resources ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N')))}
+}
+
+function Remove-LegacyStandalone($Legacy) {
+    Move-Item -LiteralPath $Legacy.app -Destination $Legacy.archive
+    try {Move-Item -LiteralPath $Legacy.original -Destination $Legacy.asar}
+    catch {Move-Item -LiteralPath $Legacy.archive -Destination $Legacy.app; throw}
+}
+
+function Undo-LegacyRemoval($Legacy) {
+    Move-Item -LiteralPath $Legacy.asar -Destination $Legacy.original
+    try {Move-Item -LiteralPath $Legacy.archive -Destination $Legacy.app}
+    catch {Move-Item -LiteralPath $Legacy.original -Destination $Legacy.asar; throw}
+}
+
+function Get-CoreEntryState([string]$Index) {
+    $installed = Join-Path (Split-Path $Index) 'discord-dccon'
+    if (Test-Path -LiteralPath $installed) {
+        $manifest = Join-Path $installed 'discord-dccon-install.json'
+        if (!(Test-Path -LiteralPath $manifest)) {throw 'Unrecognized desktop_core addon. No files were changed.'}
+        $record = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+        if ($record.kind -ne 'discord-dccon-core' -or [string]$record.hostMod -notin @('', 'vencord') -or $record.channel -ne $Channel) {throw 'Unexpected desktop_core installation record.'}
+        if ((Get-FileHash -LiteralPath (Join-Path $installed 'original.js')).Hash -ne $record.originalHash) {throw 'Modified desktop_core backup. No files were changed.'}
+        $current = (Get-FileHash -LiteralPath $Index).Hash
+        if ($current -eq $record.loaderHash) {return @{state='addon';record=$record}}
+        if ($current -eq $record.originalHash) {return @{state='original';record=$record}}
+        throw 'Modified desktop_core loader. No files were changed.'
+    }
+    if (((Get-Content -LiteralPath $Index -Raw) -replace '\s', '') -match '^module\.exports=require\(["'']\./core\.asar["'']\);?$') {return @{state='original';record=$null}}
+    return @{state='other';record=$null}
+}
+
+function Install-Standalone([string]$PackageDirectory, [string]$HostMod = '') {
     $root = [IO.Path]::GetFullPath($DiscordRoot)
     $version = Get-ChildItem -LiteralPath $root -Directory |
         Where-Object {$_.Name -match '^app-\d+(\.\d+)+$'} |
         Sort-Object {[version]($_.Name.Substring(4))} -Descending | Select-Object -First 1
     if (!$version) {throw "Discord $Channel installation not found at $root"}
-    $resources = [IO.Path]::GetFullPath((Join-Path $version.FullName 'resources'))
-    if (!$resources.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {throw 'Unexpected Discord path'}
-    $app = Join-Path $resources 'app'
-    $asar = Join-Path $resources 'app.asar'
-    $original = Join-Path $resources 'discord-dccon-original.asar'
-    $manifest = Join-Path $app 'discord-dccon-install.json'
-    $record = if (Test-Path -LiteralPath $manifest) {Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json} else {$null}
-    if ($record) {
-        $installedChannel = if ($record.channel) {$record.channel} else {'Stable'}
-        if ($installedChannel -ne $Channel) {throw "This installation uses -channel $installedChannel"}
-        if ($record.kind -ne 'discord-dccon-standalone' -or !(Test-Path -LiteralPath $original) -or
-            (Get-FileHash -LiteralPath $original).Hash -ne $record.originalHash) {throw 'Invalid discord-dccon installation or original archive changed'}
-        foreach ($file in @('index.js', 'package.json')) {
-            if ((Get-FileHash -LiteralPath (Join-Path $app $file)).Hash -ne $record.$file) {throw "Modified loader: $file"}
-        }
+    $legacy = Get-LegacyStandalone (Join-Path $version.FullName 'resources')
+    if ($Remove -and $legacy) {
+        Remove-LegacyStandalone $legacy
+        Write-Output 'Legacy discord-dccon removed; original app archive restored. User data and removed loader were preserved.'
+        return
     }
+    if (!$Remove) {
+        $metadata = Join-Path $PackageDirectory 'shelter-version.json'
+        if (!(Test-Path -LiteralPath $metadata)) {throw "This release does not support standalone $Channel (desktop_core metadata is missing). Choose a newer release."}
+        $packageInfo = Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json
+        if ($packageInfo.installLayout -ne 'desktop_core') {throw 'This package does not use the desktop_core layout. Use a newer release.'}
+        if ($Channel -notin @($packageInfo.channels)) {throw "This release does not support standalone $Channel. Choose a newer release."}
+    }
+    $entries = @(Get-DesktopCoreEntries $version.FullName $dataRoot | Select-Object -Unique)
+    if ($entries.Count -ne 1) {throw 'Launch Discord once, then quit it. Expected exactly one current desktop_core entry.'}
+    $index = $entries[0]; $core = Split-Path $index
+    if (!(Test-Path -LiteralPath (Join-Path $core 'core.asar'))) {throw 'Discord desktop_core is incomplete.'}
+    $installed = Join-Path $core 'discord-dccon'
+    $entry = Get-CoreEntryState $index
+    if ($entry.state -eq 'other') {throw 'Unknown desktop_core loader. No files were changed.'}
+    $record = $entry.record
+    if ($Remove -and !$record) {throw 'No discord-dccon installation in the current desktop_core.'}
+    $temporary = Join-Path $core ('dccon-entry-' + [guid]::NewGuid().ToString('N') + '.tmp')
     if ($Remove) {
-        if (!$record -or (Test-Path -LiteralPath $asar)) {throw 'No restorable standalone installation, or app.asar already exists'}
-        # Keep the removed loader as a recoverable sibling; never delete user files.
-        $archive = Join-Path $resources ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N'))
-        if (![IO.Path]::GetFullPath($archive).StartsWith($resources + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {throw 'Unexpected archive path'}
-        Move-Item -LiteralPath $app -Destination $archive
-        try {Move-Item -LiteralPath $original -Destination $asar}
-        catch {Move-Item -LiteralPath $archive -Destination $app; throw}
-        Write-Output 'discord-dccon removed; vanilla Discord restored. User data and removed loader were preserved.'
+        $archive = Join-Path $core ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N'))
+        Move-Item -LiteralPath $installed -Destination $archive
+        try {
+            Copy-Item -LiteralPath (Join-Path $archive 'original.js') -Destination $temporary
+            [IO.File]::Replace($temporary, $index, [System.Management.Automation.Language.NullString]::Value)
+        } catch {Move-Item -LiteralPath $archive -Destination $installed; throw}
+        finally {if (Test-Path -LiteralPath $temporary) {Remove-Item -LiteralPath $temporary}}
+        Write-Output 'discord-dccon removed. The original desktop_core entry, host mods and user data were preserved.'
         return
     }
     $build = Join-Path $PackageDirectory 'runtime'
-    if ($Channel -eq 'PTB') {
-        $metadata = Join-Path $PackageDirectory 'shelter-version.json'
-        if (!(Test-Path -LiteralPath $metadata) -or
-            'PTB' -notin @((Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json).channels)) {
-            throw 'This release does not support standalone PTB. Choose a newer release.'
-        }
-    }
-    $files = @('bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js')
-    if (Test-Path -LiteralPath (Join-Path $build 'shared-storage.cjs')) {$files += 'shared-storage.cjs'}
+    $files = @('bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js', 'shared-storage.cjs')
     foreach ($file in $files) {if (!(Test-Path -LiteralPath (Join-Path $build $file))) {throw "Package is missing runtime/$file"}}
-    if (!$record -and ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $original) -or !(Test-Path -LiteralPath $asar))) {
-        throw 'This installer requires vanilla Discord. Existing mods are not replaced.'
-    }
-    $stage = Join-Path $resources ('discord-dccon-stage-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path (Join-Path $stage 'runtime') -Force | Out-Null
-    foreach ($file in $files) {Copy-Item -LiteralPath (Join-Path $build $file) -Destination (Join-Path $stage "runtime/$file")}
-    [IO.File]::WriteAllText((Join-Path $stage 'runtime/channel.json'), (@{channel=$Channel} | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-    $entry = @'
-const path = require('node:path');
-const electron = require('electron');
-const original = path.resolve(__dirname, '../discord-dccon-original.asar');
-const metadata = require(path.join(original, 'package.json'));
-electron.app.setAppPath(original);
-electron.app.name = metadata.name;
-try { require('./runtime/main.cjs'); }
-catch (error) { try { console.error('[discord-dccon] Loader failed', error); } catch (_) {} }
-const entry = path.join(original, metadata.main);
-require.main.filename = entry;
-require('node:module')._load(entry, null, true);
+    $stage = Join-Path $core ('discord-dccon-stage-' + [guid]::NewGuid().ToString('N'))
+    $previous = $null; $activated = $false; $legacyRemoved = $false
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $stage 'runtime') -Force | Out-Null
+        foreach ($file in $files) {Copy-Item -LiteralPath (Join-Path $build $file) -Destination (Join-Path $stage "runtime/$file")}
+        $runtimeConfig = @{channel=$Channel}
+        if ($HostMod) {$runtimeConfig.hostMod = $HostMod}
+        [IO.File]::WriteAllText((Join-Path $stage 'runtime/channel.json'), ($runtimeConfig | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $original = if ($record) {Join-Path $installed 'original.js'} else {$index}
+        Copy-Item -LiteralPath $original -Destination (Join-Path $stage 'original.js')
+        $entry = @'
+// discord-dccon: preserve the app loader and the vendor desktop_core.
+try { require('./discord-dccon/runtime/main.cjs'); }
+catch (error) { console.error('[discord-dccon] Loader failed', error); }
+module.exports = require('./core.asar');
 '@
-    [IO.File]::WriteAllText((Join-Path $stage 'index.js'), $entry)
-    [IO.File]::WriteAllText((Join-Path $stage 'package.json'), '{"main":"index.js"}')
-    $saved = @{kind='discord-dccon-standalone';channel=$Channel;originalHash=if ($record) {$record.originalHash} else {(Get-FileHash -LiteralPath $asar).Hash}}
-    foreach ($file in @('index.js', 'package.json')) {$saved[$file] = (Get-FileHash -LiteralPath (Join-Path $stage $file)).Hash}
-    $saved | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'discord-dccon-install.json') -Encoding utf8
-    if ($record) {
-        $previous = Join-Path $resources ('discord-dccon-previous-' + [guid]::NewGuid().ToString('N'))
-        Move-Item -LiteralPath $app -Destination $previous
-        try {Move-Item -LiteralPath $stage -Destination $app}
-        catch {Move-Item -LiteralPath $previous -Destination $app; throw}
-    } else {
-        Move-Item -LiteralPath $asar -Destination $original
-        try {Move-Item -LiteralPath $stage -Destination $app}
-        catch {Move-Item -LiteralPath $original -Destination $asar; throw}
+        [IO.File]::WriteAllText((Join-Path $stage 'index.js'), $entry, [Text.UTF8Encoding]::new($false))
+        $saved = @{kind='discord-dccon-core';hostMod=$HostMod;channel=$Channel;originalHash=(Get-FileHash -LiteralPath (Join-Path $stage 'original.js')).Hash;loaderHash=(Get-FileHash -LiteralPath (Join-Path $stage 'index.js')).Hash}
+        $saved | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'discord-dccon-install.json') -Encoding utf8
+        if ($legacy) {Remove-LegacyStandalone $legacy; $legacyRemoved = $true}
+        if ($record) {
+            $backup = Join-Path $core ('discord-dccon-previous-' + [guid]::NewGuid().ToString('N'))
+            Move-Item -LiteralPath $installed -Destination $backup
+            $previous = $backup
+        }
+        Move-Item -LiteralPath $stage -Destination $installed; $activated = $true
+        Copy-Item -LiteralPath (Join-Path $installed 'index.js') -Destination $temporary
+        [IO.File]::Replace($temporary, $index, [System.Management.Automation.Language.NullString]::Value)
+    } catch {
+        if ($activated) {Move-Item -LiteralPath $installed -Destination $stage}
+        if ($previous) {Move-Item -LiteralPath $previous -Destination $installed}
+        if ($legacyRemoved) {Undo-LegacyRemoval $legacy}
+        throw
+    } finally {
+        if (Test-Path -LiteralPath $stage) {Remove-Item -LiteralPath $stage -Recurse -Force}
+        if (Test-Path -LiteralPath $temporary) {Remove-Item -LiteralPath $temporary}
     }
-    Write-Output "discord-dccon standalone installed for Discord $Channel. Start Discord normally. Host updates may require running this installer again."
+    Write-Output "discord-dccon standalone installed for Discord $Channel (desktop_core). Start Discord normally. Host updates may require reinstalling discord-dccon."
 }
-
 function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     $version = Get-ChildItem -LiteralPath $Root -Directory |
         Where-Object {$_.Name -match '^app-\d+(\.\d+)+$'} |
@@ -127,10 +204,9 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     }
     $states = @()
     $appEntry = Join-Path $resources 'app/index.js'
-    $record = Join-Path $resources 'app/discord-dccon-install.json'
-    if (Test-Path -LiteralPath $record) {
-        if ((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).kind -ne 'discord-dccon-standalone') {throw 'Unknown installation record.'}
-        $states += 'Standalone'
+    $legacy = Get-LegacyStandalone $resources
+    if ($legacy) {
+        # Validated above; cleanup happens only after the new package is verified and staged.
     } elseif (Test-Path -LiteralPath (Join-Path $resources 'app')) {
         if (!(Test-Path -LiteralPath $appEntry)) {throw 'Unknown Discord app loader.'}
         $entry = Get-Content -LiteralPath $appEntry -Raw
@@ -139,28 +215,25 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
             (Test-Path -LiteralPath (Join-Path $resources 'app.asar'))) {throw 'Unknown or inactive Discord app loader.'}
         $states += 'BetterDiscord'
     } elseif (!(Test-Path -LiteralPath (Join-Path $resources 'app.asar'))) {throw 'Discord app.asar is missing.'}
+    $archive = if ($legacy) {$legacy.original} else {Join-Path $resources 'app.asar'}
+    if (Test-VencordArchive $resources $archive) {$states += 'Vencord'}
+    $hasStandalone = $false
     # Inspect only this host version, never a stale module left by an older Discord.
-    $moduleRoots = @((Join-Path $version.FullName 'modules'),
-        (Join-Path $DataRoot ($version.Name + '/modules')),
-        (Join-Path $DataRoot ($version.Name.Substring(4) + '/modules')))
-    foreach ($modules in $moduleRoots) {
-        if (!(Test-Path -LiteralPath $modules)) {continue}
-        foreach ($module in Get-ChildItem -LiteralPath $modules -Directory | Where-Object {$_.Name -match '^discord_desktop_core(?:-\d+)?$'}) {
-            $entries = @((Join-Path $module.FullName 'index.js'), (Join-Path $module.FullName 'discord_desktop_core/index.js')) |
-                Where-Object {Test-Path -LiteralPath $_}
-            foreach ($file in $entries) {
-                $entry = Get-Content -LiteralPath $file -Raw
-                if (($entry -replace '\s', '') -match '^module\.exports=require\(["'']\./core\.asar["'']\);?$') {continue}
-                if ($entry -match 'betterdiscord\.asar' -and $entry -match 'core\.asar') {$states += 'BetterDiscord'}
-                else {throw "Unknown core loader: $file"}
-            }
+    foreach ($file in @(Get-DesktopCoreEntries $version.FullName $DataRoot | Select-Object -Unique)) {
+        $entry = Get-CoreEntryState $file
+        if ($entry.record) {$hasStandalone = $true}
+        elseif ($entry.state -eq 'other') {
+            $text = Get-Content -LiteralPath $file -Raw
+            if ($text -match 'betterdiscord\.asar' -and $text -match 'core\.asar') {$states += 'BetterDiscord'}
+            else {throw "Unknown core loader: $file"}
         }
     }
-    if ($states.Count -gt 1) {throw 'Multiple client mod loaders detected. Resolve them before installing.'}
+    if ($states.Count -gt 1 -or ($hasStandalone -and $legacy) -or (($hasStandalone -or $legacy) -and $states -contains 'BetterDiscord')) {throw 'Multiple client mod loaders detected. Resolve them before installing.'}
     if ($states -contains 'BetterDiscord') {
         if (!(Test-Path -LiteralPath (Join-Path $env:APPDATA 'BetterDiscord/data/betterdiscord.asar'))) {throw 'BetterDiscord injection exists but its runtime is missing. Repair BetterDiscord first.'}
         return 'BetterDiscord'
     }
+    if ($states -contains 'Vencord') {return 'Vencord'}
     return 'Standalone'
 }
 $Mode = switch ($Mode) { 'betterdiscord' {'BetterDiscord'} 'standalone' {'Standalone'} default {'Auto'} }
@@ -173,11 +246,13 @@ if (Get-Process -Name Discord,DiscordPTB,DiscordCanary -ErrorAction SilentlyCont
 }
 $dataRoot = Join-Path $env:APPDATA $client.ToLowerInvariant()
 $detected = Get-InstallationMode $DiscordRoot $dataRoot
+$HostMod = if ($detected -eq 'Vencord') {'vencord'} else {''}
+if ($HostMod) {$detected = 'Standalone'}
 if ($Mode -ne 'Auto' -and $Mode -ne $detected) {throw "Detected $detected; requested $Mode. Existing loaders are not replaced."}
 $Mode = $detected
 Write-Host "Selected $Mode for Discord $Channel."
 if ($Remove) {
-    if ($Mode -eq 'BetterDiscord') {Install-BetterDiscord} else {Install-Standalone}
+    if ($Mode -eq 'BetterDiscord') {Install-BetterDiscord} else {Install-Standalone -HostMod $HostMod}
     return
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -212,7 +287,7 @@ try {
     }
     $package = Join-Path $workspace 'package'
     Expand-Archive -LiteralPath $archive -DestinationPath $package
-    if ($Mode -eq 'BetterDiscord') {Install-BetterDiscord $package} else {Install-Standalone $package}
+    if ($Mode -eq 'BetterDiscord') {Install-BetterDiscord $package} else {Install-Standalone $package $HostMod}
 } finally {
     $resolved = [IO.Path]::GetFullPath($workspace)
     $prefix = $tempBase.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

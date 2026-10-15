@@ -84,7 +84,16 @@ function createAdapter(shelter, native, webpack) {
     Data: {
       load: (_, key) => clone(store.dcconData?.[key]),
     },
-    Net: {fetch: fetchNative}, Logger: {error: (...args) => console.error('[discord-dccon shelter]', ...args)},
+    Net: {fetch: fetchNative, ...(native.hostMod === 'vencord' ? {
+      async resolveImage(source, signal) {
+        const url = new URL(source);
+        const direct = url.origin === 'https://dccon-proxy.minibox.workers.dev'
+          ? 'https://dcimg5.dcinside.com/dccon.php?no=' + encodeURIComponent(url.searchParams.get('no') || '') : source;
+        const response = await fetchNative(direct, {signal, headers: {Referer: 'https://dcimg5.dcinside.com'}});
+        if (!response.ok) throw Error('디시콘 미리보기를 다운로드하지 못했습니다.');
+        return new Blob([await response.arrayBuffer()], {type: response.headers.get('content-type') || 'image/gif'});
+      },
+    } : {})}, Logger: {error: (...args) => console.error('[discord-dccon shelter]', ...args)},
     UI: {showToast: (content, options = {}) => shelter.ui.showToast({title: 'discord-dccon', content,
       duration: options.timeout || 4000,
       color: shelter.ui.ToastColors[options.type === 'error' ? 'CRITICAL' : options.type === 'success' ? 'SUCCESS' : 'INFO']})},

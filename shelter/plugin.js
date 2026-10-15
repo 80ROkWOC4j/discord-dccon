@@ -6,13 +6,14 @@
     clearTimeout(timer);
     try {plugin?.stop();} finally {adapter?.dispose();}
   }
-  function start() {
+  async function start() {
     if (disposed) return;
     if (typeof globalThis.BdApi !== 'undefined') {
       console.error('[discord-dccon shelter] BetterDiscord 중복 실행 감지. 기존 로더를 확인하세요.');
       return;
     }
     const checks = {
+      Webpack: dcconWebpack.isReady?.() !== false,
       React: !!shelter.React?.createElement,
       ReactDOM: !!shelter.ReactDOM?.createPortal,
       ReactDOMClient: !!shelter.ReactDOMClient?.createRoot,
@@ -41,7 +42,7 @@
       new Function('BdApi', 'require', 'module', dcconSource)(
         adapter.BdApi, adapter.requireNative, exported);
       plugin = new exported.exports({name: 'discord-dccon', version: dcconVersion});
-      plugin.start();
+      await plugin.start();
     } catch (error) {
       try {plugin?.stop();} finally {adapter?.dispose();}
       console.error('[discord-dccon shelter]', error);

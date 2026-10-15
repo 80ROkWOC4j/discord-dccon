@@ -17,6 +17,11 @@ async function fixture(t) {
   const resources = path.join(dir, 'app-1.0.1/resources');
   await fs.mkdir(resources, {recursive: true});
   await fs.writeFile(path.join(resources, 'app.asar'), 'original Discord archive');
+  const core = path.join(dir, 'app-1.0.1/modules/discord_desktop_core');
+  await fs.mkdir(core, {recursive:true});
+  await fs.writeFile(path.join(core,'index.js'),'module.exports = require("./core.asar");\n');
+  await fs.writeFile(path.join(core,'core.asar'),'vendor core');
+  const installed = path.join(core,'discord-dccon');
   const appData = path.join(dir, 'roaming'), plugins = path.join(appData, 'BetterDiscord/plugins');
   await fs.mkdir(plugins, {recursive: true});
   const wrapper = path.join(dir, 'installer-test.ps1');
@@ -57,7 +62,7 @@ function Invoke-WebRequest {
     else assert.notEqual(result.status, 0);
     return result;
   };
-  return {dir, resources, appData, plugins, env, run};
+  return {dir, resources, core, installed, appData, plugins, env, run};
 }
 async function installBetterDiscordFixture({resources, appData}) {
   await fs.rename(path.join(resources, 'app.asar'), path.join(resources, 'betterdiscord.app.asar'));
@@ -67,33 +72,34 @@ async function installBetterDiscordFixture({resources, appData}) {
   await fs.writeFile(path.join(appData, 'BetterDiscord/data/betterdiscord.asar'), 'BetterDiscord runtime');
 }
 
-test('standalone package installs, updates, restores vanilla archive and preserves old loaders', {skip: process.platform !== 'win32'}, async t => {
-  const {dir, resources, run} = await fixture(t);
+test('standalone package installs, updates and restores the core without changing app archives', {skip: process.platform !== 'win32'}, async t => {
+  const {dir, resources, core, installed, run} = await fixture(t);
   run(['-DiscordRoot', dir]);
-  assert.equal(await fs.readFile(path.join(resources, 'discord-dccon-original.asar'), 'utf8'), 'original Discord archive');
-  assert.match(await fs.readFile(path.join(resources, 'app/index.js'), 'utf8'), /discord-dccon-original\.asar/);
-  await fs.writeFile(path.join(resources, 'app/keep-me.txt'), 'user file');
+  assert.equal(await fs.readFile(path.join(resources, 'app.asar'), 'utf8'), 'original Discord archive');
+  assert.match(await fs.readFile(path.join(core, 'index.js'), 'utf8'), /discord-dccon\/runtime\/main\.cjs/);
+  await fs.writeFile(path.join(installed, 'keep-me.txt'), 'user file');
   for (const file of ['bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js', 'shared-storage.cjs'])
-    assert.deepEqual(await fs.readFile(path.join(resources, 'app/runtime', file)), await fs.readFile(path.join(repo, 'artifacts/dist/standalone/runtime', file)));
+    assert.deepEqual(await fs.readFile(path.join(installed, 'runtime', file)), await fs.readFile(path.join(repo, 'artifacts/dist/standalone/runtime', file)));
   run(['-DiscordRoot', dir]);
-  const previous = (await fs.readdir(resources)).find(name => name.startsWith('discord-dccon-previous-'));
-  assert.equal(await fs.readFile(path.join(resources, previous, 'keep-me.txt'), 'utf8'), 'user file');
+  const previous = (await fs.readdir(core)).find(name => name.startsWith('discord-dccon-previous-'));
+  assert.equal(await fs.readFile(path.join(core, previous, 'keep-me.txt'), 'utf8'), 'user file');
   run(['-DiscordRoot', dir, '-Restore']);
   assert.equal(await fs.readFile(path.join(resources, 'app.asar'), 'utf8'), 'original Discord archive');
-  await assert.rejects(fs.access(path.join(resources, 'app')));
+  await assert.rejects(fs.access(installed));
+  assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),'module.exports = require("./core.asar");\n');
 });
 
 test('standalone refuses existing mods and refuses restoring a modified loader', {skip: process.platform !== 'win32'}, async t => {
-  const {dir, resources, run} = await fixture(t);
+  const {dir, resources, core, installed, run} = await fixture(t);
   await fs.mkdir(path.join(resources, 'app'));
   await fs.writeFile(path.join(resources, 'app/index.js'), 'other mod');
   assert.match(run(['-DiscordRoot', dir], false).stderr, /Unknown or inactive Discord app loader/);
   assert.equal(await fs.readFile(path.join(resources, 'app/index.js'), 'utf8'), 'other mod');
   await fs.rename(path.join(resources, 'app'), path.join(resources, 'other-mod'));
   run(['-DiscordRoot', dir]);
-  await fs.appendFile(path.join(resources, 'app/index.js'), '\n// external edit');
-  assert.match(run(['-DiscordRoot', dir, '-Restore'], false).stderr, /Modified loader/);
-  assert.equal(await fs.readFile(path.join(resources, 'discord-dccon-original.asar'), 'utf8'), 'original Discord archive');
+  await fs.appendFile(path.join(core, 'index.js'), '\n// external edit');
+  assert.match(run(['-DiscordRoot', dir, '-Restore'], false).stderr, /modified desktop_core/i);
+  assert.equal(await fs.readFile(path.join(resources, 'app.asar'), 'utf8'), 'original Discord archive');
 });
 
 test('Canary selects its default directory, leaves Stable untouched, and blocks running Canary', {skip: process.platform !== 'win32'}, async t => {
@@ -102,22 +108,26 @@ test('Canary selects its default directory, leaves Stable untouched, and blocks 
     const resources = path.join(dir, client, 'app-1.0.1/resources');
     await fs.mkdir(resources, {recursive: true});
     await fs.writeFile(path.join(resources, 'app.asar'), client);
+    const core=path.join(dir,client,'app-1.0.1/modules/discord_desktop_core');
+    await fs.mkdir(core,{recursive:true});
+    await fs.writeFile(path.join(core,'index.js'),'module.exports = require("./core.asar");');
+    await fs.writeFile(path.join(core,'core.asar'),'vendor core');
   }
   env.DCCON_TEST_PROCESS = path.join(dir, 'Discord/app-1.0.1/Discord.exe');
   const invoke = (args, success = true) => run(['-Channel', 'Canary', ...args], success);
   invoke([]);
-  const canary = path.join(dir, 'DiscordCanary/app-1.0.1/resources');
-  assert.equal(JSON.parse(await fs.readFile(path.join(canary, 'app/discord-dccon-install.json'), 'utf8')).channel, 'Canary');
+  const canary = path.join(dir, 'DiscordCanary/app-1.0.1/modules/discord_desktop_core');
+  assert.equal(JSON.parse(await fs.readFile(path.join(canary, 'discord-dccon/discord-dccon-install.json'), 'utf8')).channel, 'Canary');
   assert.equal(await fs.readFile(path.join(dir, 'Discord/app-1.0.1/resources/app.asar'), 'utf8'), 'Discord');
   env.DCCON_TEST_PROCESS = path.join(dir, 'DiscordCanary/app-1.0.1/DiscordCanary.exe');
   for (const args of [['-Remove'], ['-Remove', '-ShortPath']]) {
     const result = invoke(args, false);
     assert.match(result.stderr, /Fully quit Discord Canary/);
-    await fs.access(path.join(canary, 'app/index.js'));
+    await fs.access(path.join(canary, 'index.js'));
   }
   env.DCCON_TEST_PROCESS = '';
   invoke(['-Remove']);
-  assert.equal(await fs.readFile(path.join(canary, 'app.asar'), 'utf8'), 'DiscordCanary');
+  assert.equal(await fs.readFile(path.join(dir, 'DiscordCanary/app-1.0.1/resources/app.asar'), 'utf8'), 'DiscordCanary');
 });
 
 test('BetterDiscord package changes only the plugin and retains previous plugin', {skip: process.platform !== 'win32'}, async t => {
@@ -136,7 +146,7 @@ test('BetterDiscord package changes only the plugin and retains previous plugin'
 
 test('online command installs both modes on Windows PowerShell 5.1 and rejects corrupt downloads', {skip: process.platform !== 'win32'}, async t => {
   const standalone = await fixture(t), bd = await fixture(t);
-  const {dir, resources} = standalone, {plugins} = bd;
+  const {dir, resources, installed} = standalone, {plugins} = bd;
   await installBetterDiscordFixture(bd);
   await fs.writeFile(path.join(plugins, 'discord-dccon.config.json'), '{"preserved":true}');
   const online = (mode, args = [], success = true) => {
@@ -152,11 +162,11 @@ test('online command installs both modes on Windows PowerShell 5.1 and rejects c
   online('BetterDiscord'); // An already-installed child exits successfully without skipping cleanup.
   assert.equal(await fs.readFile(path.join(plugins, 'discord-dccon.config.json'), 'utf8'), '{"preserved":true}');
   online('Standalone');
-  await fs.access(path.join(resources, 'app/runtime/bootstrap.js'));
-  await fs.access(path.join(resources, 'app/runtime/shared-storage.cjs'));
+  await fs.access(path.join(installed, 'runtime/bootstrap.js'));
+  await fs.access(path.join(installed, 'runtime/shared-storage.cjs'));
   online('Standalone', ['-Remove']);
   online('Standalone', ['-Channel', 'Canary']);
-  assert.equal(JSON.parse(await fs.readFile(path.join(resources, 'app/runtime/channel.json'), 'utf8')).channel, 'Canary');
+  assert.equal(JSON.parse(await fs.readFile(path.join(installed, 'runtime/channel.json'), 'utf8')).channel, 'Canary');
   online('Standalone', ['-Channel', 'Canary', '-Restore']);
   assert.equal(await fs.readFile(path.join(resources, 'app.asar'), 'utf8'), 'original Discord archive');
   assert.equal((await fs.readdir(dir)).filter(name => name.startsWith('discord-dccon-install-')).length, 0);

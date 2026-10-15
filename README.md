@@ -30,7 +30,8 @@ powershell -c "irm https://github.com/80ROkWOC4j/discord-dccon/releases/latest/d
 ```sh
 curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh | bash
 ```
-Mac standalone은 사용자의 core 모듈에 설치하기에 Discord 업데이트로 로더가 제거되면 다시 설치해야 합니다.
+
+Discord 업데이트 하면서 일부 파일이 바뀌면 작동하지 않을 수 있습니다. 그럴 때는 재설치 해야 합니다.
 
 ### BetterDiscord 수동 설치
 

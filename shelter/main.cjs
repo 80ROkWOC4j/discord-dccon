@@ -5,9 +5,14 @@ const path = require('node:path');
 const {download, prepareDataRoot, channelOptions} = require('./native');
 const {createConfigStore} = require('./shared-storage.cjs');
 const {app, ipcMain, net} = electron;
-let channel = 'Stable';
-try {channel = JSON.parse(fs.readFileSync(path.join(__dirname, 'channel.json'), 'utf8')).channel || 'Stable';}
+let channel = 'Stable', hostMod;
+try {
+  const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'channel.json'), 'utf8'));
+  channel = config.channel || 'Stable';
+  hostMod = config.hostMod;
+}
 catch (error) {if (error.code !== 'ENOENT') throw error;}
+if (hostMod !== undefined && hostMod !== 'vencord') throw Error('Unsupported host mod');
 const {origin} = channelOptions(channel);
 const dataRoot = prepareDataRoot(require('node:process').platform === 'linux'
   ? path.join(app.getPath('home'), '.config') : app.getPath('appData'), channel);
@@ -22,7 +27,7 @@ function trusted(event) {
 ipcMain.on('dccon:init', event => {
   if (!preloads.has(event.sender.id)) {event.returnValue = null; return;}
   const legacyRoot = path.join(app.getPath('appData'), 'BetterDiscord', 'plugins');
-  event.returnValue = {bundle, origin, dataRoot, cacheRoot, legacyRoot, originalPreload: preloads.get(event.sender.id)};
+  event.returnValue = {bundle, origin, dataRoot, cacheRoot, legacyRoot, hostMod, originalPreload: preloads.get(event.sender.id)};
 });
 ipcMain.on('dccon:abort', (event, id) => {
   trusted(event);
@@ -67,7 +72,7 @@ const BrowserWindow = new Proxy(electron.BrowserWindow, {
 Object.defineProperty(require.cache[require.resolve('electron')], 'exports', {
   configurable: true, writable: true, value: {...electron, BrowserWindow},
 });
-app.on('ready', () => {
+function installHeaders() {
   electron.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const headers = details.responseHeaders;
     if (details.resourceType === 'mainFrame' && new URL(details.url).origin === origin) {
@@ -83,4 +88,11 @@ app.on('ready', () => {
     }
     callback({responseHeaders: headers});
   });
-});
+}
+// The macOS desktop-core entry is loaded after Electron's ready event.
+// Vencord owns this single-listener Electron hook; registering here would
+// replace its CSP. The adapter downloads thumbnail bytes and uses Blob URLs.
+if (hostMod !== 'vencord') {
+  if (app.isReady()) installHeaders();
+  else app.on('ready', installHeaders);
+}

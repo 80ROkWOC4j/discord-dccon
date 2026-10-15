@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
-const {captureWebpack} = require('../shelter/webpack');
+const {captureWebpack, findWebpackRequire} = require('../shelter/webpack');
 const {createAdapter} = require('../shelter/adapter');
 const {createFiles, resolveFile, allowedDownload, hash, prepareDataRoot, channelOptions} = require('../shelter/native');
 
@@ -30,6 +30,38 @@ test('webpack runtime can bind the previous push without recursive calls', () =>
   assert.doesNotThrow(() => chunks.push([[1], {1: module => {module.exports = {ready: true};}}]));
   assert.equal(api.getByKeys('ready').ready, true);
   assert.equal(chunks.length, 1);
+});
+
+test('Vencord lookup waits for its require and preserves factories and chunk push', () => {
+  const chunks = [], originalPush = chunks.push;
+  const target = {webpackChunkdiscord_app: chunks};
+  let external;
+  const webpack = captureWebpack(target, () => external);
+  assert.equal(webpack.isReady(), false);
+  assert.equal(webpack.getByKeys('ready'), undefined);
+  const factories = {
+    1: module => {module.exports = {ready: true};},
+    2: module => {module.exports = {minified: class {trackUploadFinished() {} upload() {}}};},
+    3: () => {throw Error('Unrelated factory must not execute');},
+  };
+  const uploadFactory = factories[2];
+  external = id => {
+    if (!external.c[id]) {
+      const module = external.c[id] = {exports: {}};
+      external.m[id](module, module.exports, external);
+    }
+    return external.c[id].exports;
+  };
+  external.m = factories; external.c = {};
+  chunks.push([[1], factories]);
+  assert.equal(webpack.isReady(), true);
+  assert.equal(chunks.push, originalPush);
+  assert.equal(factories[2], uploadFactory);
+  assert.match(String(factories[2]), /trackUploadFinished/);
+  external(1);
+  assert.equal(webpack.getByKeys('ready').ready, true);
+  assert.equal(typeof webpack.getModuleBySource(value => typeof value?.prototype?.trackUploadFinished === 'function', 'trackUploadFinished'), 'function');
+  assert.equal(external.c[3], undefined);
 });
 
 test('upload lookup skips CSS and initializes only matching lazy factories', () => {
@@ -205,15 +237,16 @@ test('plugin starts after first-store retry without PoC status APIs and cleans u
   assert.equal(context.DCConShelterStatus, undefined);
 });
 
-for (const platform of ['win32', 'linux']) for (const channel of ['Stable', 'Canary']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP to its origin`, async () => {
+for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
   const events = new Map();
-  let ready, onHeaders;
-  const electron = {app: {getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle() {}},
+  const existingHeaders = () => {};
+  let ready, onHeaders = existingHeaders;
+  const electron = {app: {isReady: () => alreadyReady, getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle() {}},
     session: {defaultSession: {webRequest: {onHeadersReceived: fn => {onHeaders = fn;}}}},
     BrowserWindow: class {constructor(options) {this.options = options; this.webContents = {id: 7, once() {}};}}, net: {}};
   const cachedModule = {};
   Object.defineProperty(cachedModule, 'exports', {configurable: true, get: () => electron});
-  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel}) : '{}'};
+  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel, hostMod}) : '{}'};
   function load(name) {
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
@@ -237,6 +270,7 @@ for (const platform of ['win32', 'linux']) for (const channel of ['Stable', 'Can
   assert.equal(event.returnValue.originalPreload, '/discord/preload.js');
   assert.equal(event.returnValue.initialData, undefined);
   assert.equal(event.returnValue.cacheRoot, path.join(event.returnValue.dataRoot, 'cache'));
+  assert.equal(event.returnValue.hostMod, hostMod);
   const origin = channelOptions(channel).origin;
   assert.equal(event.returnValue.origin, origin);
   const frame = {url: origin + '/channels/@me'};
@@ -246,7 +280,13 @@ for (const platform of ['win32', 'linux']) for (const channel of ['Stable', 'Can
     assert.throws(() => events.get('dccon:abort')({senderFrame: otherFrame, sender: {mainFrame: otherFrame}}, 1), /Untrusted/);
   }
   assert.equal(events.has('dccon:status'), false);
-  ready();
+  if (hostMod === 'vencord') {
+    assert.equal(onHeaders, existingHeaders, 'Vencord must retain its CSP handler');
+    assert.equal(ready, undefined);
+    return;
+  }
+  if (alreadyReady) assert.equal(ready, undefined);
+  else { assert.equal(onHeaders, existingHeaders); ready(); }
   const responseHeaders = {'Content-Security-Policy': ["default-src 'self'; img-src 'self' https://*.discordapp.net; script-src 'self'; worker-src 'self'"]};
   onHeaders({resourceType: 'mainFrame', url: origin + '/channels/@me', responseHeaders}, result => {
     const csp = result.responseHeaders['Content-Security-Policy'][0];
@@ -283,4 +323,106 @@ test('preload injects only the configured channel main frame and always loads or
       assert.equal(reads, 1);
     } else assert.equal(bridge, undefined);
   }
+});
+
+test('late shelter plugin obtains existing webpack without wrapping its factories', () => {
+  const channelStore = {getChannelId() {}};
+  const factories = {42: module => {module.exports = {minified: class {trackUploadFinished() {} upload() {}}};}};
+  const originalFactory = factories[42];
+  const requireModule = id => {
+    if (!requireModule.c[id]) {
+      const module = requireModule.c[id] = {exports: {}};
+      factories[id](module, module.exports, requireModule);
+    }
+    return requireModule.c[id].exports;
+  };
+  requireModule.m = factories; requireModule.c = {1: {exports: {minified: channelStore}}};
+  const chunks = [];
+  const library = Object.assign(() => {}, {m: {}, c: {2: {exports: {unrelated: true}}}});
+  chunks.push = chunk => {chunk[2](requireModule); chunk[2](library);};
+  const push = chunks.push;
+  const target = {webpackChunkdiscord_app: chunks, crypto: {randomUUID: () => 'test'}};
+  assert.equal(findWebpackRequire(target, channelStore), requireModule);
+  assert.equal(findWebpackRequire(target, {}), undefined);
+  const webpack = captureWebpack(target, () => requireModule);
+  const upload = webpack.getModuleBySource(value => typeof value?.prototype?.upload === 'function', 'trackUploadFinished');
+  assert.equal(typeof upload, 'function');
+  assert.equal(factories[42], originalFactory);
+  assert.equal(chunks.push, push);
+});
+
+test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings changes', async () => {
+  const calls = [];
+  const native = {hostMod: 'vencord', fetch: async (id, url, options) => {
+    calls.push({url,options});return {status:200,headers:[['content-type','image/gif']],bytes:new Uint8Array([71,73,70])};
+  }};
+  const adapter = createAdapter({plugin:{store:{}},ReactDOM:{}},native,{});
+  const blob = await adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123');
+  assert.equal(calls[0].url,'https://dcimg5.dcinside.com/dccon.php?no=abc123');
+  assert.equal(blob.type,'image/gif');
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())],[71,73,70]);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123',controller.signal),{name:'AbortError'});
+  assert.equal(calls.length,1);
+  adapter.dispose();
+});
+
+test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native rendering on other hosts', async () => {
+  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+  const pending=[],revoked=[];
+  const context={module:{exports:{}},AbortController,URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
+    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      Net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
+  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+  const Image=context.module.exports,image=new Image({src:'first',loading:'lazy'});
+  image.componentDidMount();pending[0].resolve('first');await Promise.resolve();
+  assert.equal(image.render().props.src,'blob:first');assert.equal(image.render().props.loading,'eager');
+  image.props={src:'second'};image.componentDidUpdate({src:'first'});
+  assert.equal(pending[0].signal.aborted,true);assert.deepEqual(revoked,['blob:first']);
+  image.componentWillUnmount();pending[1].resolve('second');await Promise.resolve();
+  assert.equal(image.state.source,undefined);assert.equal(pending[1].signal.aborted,true);
+  delete context.BdApi.Net.resolveImage;
+  const direct=new Image({src:'original',loading:'lazy'});direct.componentDidMount();
+  assert.equal(direct.render().props.src,'original');assert.equal(direct.render().props.loading,'lazy');
+});
+
+test('Blob thumbnails wait for intersection and ignore stale visibility callbacks', async () => {
+  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+  const downloads=[], observers=[], revoked=[];
+  const context={module:{exports:{}},AbortController,
+    IntersectionObserver:class {
+      constructor(callback,options){this.callback=callback;this.options=options;observers.push(this);}
+      observe(target){this.target=target;}
+      disconnect(){this.disconnected=true;}
+      notify(isIntersecting){this.callback([{target:this.target,isIntersecting}]);}
+    },
+    URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
+    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      Net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
+  };
+  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+  const Image=context.module.exports, scrollRoot={};
+  const images=Array.from({length:200},(_,i)=>{
+    const image=new Image({src:'image-'+i,loading:'lazy'});
+    image.render().props.ref?.({closest:()=>scrollRoot});image.componentDidMount();return image;
+  });
+  assert.equal(downloads.length,0,'Mounting offscreen thumbnails must not download them');
+  assert.equal(observers.length,200);
+  assert.equal(observers[0].options.root,scrollRoot);
+  observers[0].notify(false);assert.equal(downloads.length,0);
+  for(let i=0;i<8;i++)observers[i].notify(true);
+  assert.equal(downloads.length,8,'Only visible thumbnails should download');
+  observers[0].notify(true);assert.equal(downloads.length,8,'Repeated queued callbacks cannot duplicate requests');
+  downloads[0].resolve('first');await Promise.resolve();
+  assert.equal(images[0].render().props.src,'blob:first');
+  images[0].props={src:'replacement',loading:'lazy'};images[0].componentDidUpdate({src:'image-0'});
+  assert.equal(downloads[0].signal.aborted,true);assert.deepEqual(revoked,['blob:first']);
+  assert.equal(images[0].state.source,undefined);
+  observers[0].notify(true);assert.equal(downloads.length,8);
+  observers.at(-1).notify(true);assert.equal(downloads[8].src,'replacement');
+  images[1].componentWillUnmount();downloads[1].resolve('stale');await Promise.resolve();
+  assert.equal(images[1].state.source,undefined);
+  images[199].componentWillUnmount();observers[199].notify(true);
+  assert.equal(downloads.length,9,'Unmounted offscreen image must not download');
+  for(const image of images)image.componentWillUnmount();
 });

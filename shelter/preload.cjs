@@ -3,6 +3,7 @@ const {createFiles, hash} = require('./native');
 const config = ipcRenderer.sendSync('dccon:init');
 if (config && process.isMainFrame && location.origin === config.origin) {
   contextBridge.exposeInMainWorld('DCConNative', {
+    hostMod: config.hostMod,
     file: createFiles(config.dataRoot, config.legacyRoot, config.cacheRoot),
     hash,
     config: (method, args) => ipcRenderer.invoke('dccon:config', method, args),

@@ -19,6 +19,47 @@
 const DCConBaseURL = "https://dcimg5.dcinside.com/dccon.php?no=";
 const DCConProxyURL = "https://dccon-proxy.minibox.workers.dev/?no=";
 
+class DCConImage extends BdApi.React.Component {
+  constructor(props) { super(props); this.state = {source: undefined}; }
+  componentDidMount() { this.load(); }
+  componentDidUpdate(previous) { if (previous.src !== this.props.src) this.load(); }
+  componentWillUnmount() { this.release(); }
+  release() {
+    this.observer?.disconnect();
+    this.observer = undefined;
+    this.controller?.abort();
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.url = undefined;
+  }
+  load() {
+    if (!BdApi.Net?.resolveImage) return;
+    this.release();
+    this.setState({source: undefined});
+    const download = () => {
+      const controller = this.controller = new AbortController();
+      BdApi.Net.resolveImage(this.props.src, controller.signal).then(blob => {
+        if (controller.signal.aborted) return;
+        this.url = URL.createObjectURL(blob);
+        this.setState({source: this.url});
+      }).catch(() => {if (!controller.signal.aborted) this.props.onError?.();});
+    };
+    if (typeof IntersectionObserver === "undefined") { download(); return; }
+    const observer = this.observer = new IntersectionObserver(entries => {
+      if (this.observer !== observer || !entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect(); this.observer = undefined;
+      download();
+    }, {root: this.image.closest(".dccon-browser-content, .dccon-popover-body, .dccon-rail"), rootMargin: "160px"});
+    observer.observe(this.image);
+  }
+  render() {
+    return BdApi.React.createElement("img", {...this.props,
+      ref: image => { this.image = image; },
+      src: BdApi.Net?.resolveImage ? this.state.source : this.props.src,
+      loading: BdApi.Net?.resolveImage ? "eager" : this.props.loading,
+    });
+  }
+}
+
 const ManduIcon = (props) => {
   const size = props.size || "24px";
 
@@ -1291,7 +1332,7 @@ class PackThumbnail extends BdApi.React.Component {
       return BdApi.React.createElement("span", { className, "aria-hidden": true }, pack.info.title.slice(0, 1));
     }
     const next = () => this.setState(state => ({ index: state.index + 1 }));
-    return BdApi.React.createElement("img", {
+    return BdApi.React.createElement(DCConImage, {
       className, alt: "", src: DCConProxyURL + paths[this.state.index], loading: "lazy",
       onError: next,
       onLoad: event => { if (event.currentTarget.naturalWidth <= 1 || event.currentTarget.naturalHeight <= 1) next(); },
@@ -1418,7 +1459,7 @@ class DCConItem extends BdApi.React.Component {
         onClick: event => this.attach(event),
       }, this.state.error ? h("span", { className: "dccon-item-error" }, "이미지 로드 실패")
         : con.path.startsWith("personal:") ? h(PersonalImage, {con, onError: () => this.setState({error: true})})
-        : h("img", { src: DCConProxyURL + con.path, alt: con.title, loading: "lazy", onError: () => this.setState({ error: true }) }),
+        : h(DCConImage, { src: DCConProxyURL + con.path, alt: con.title, loading: "lazy", onError: () => this.setState({ error: true }) }),
         this.state.busy && h("span", { className: "dccon-loading", role: "status" }, "처리 중…")
       ),
       h("button", { type: "button", className: "dccon-favorite", "aria-label": this.state.favorite ? "즐겨찾기 해제" : "즐겨찾기 추가",
@@ -1664,7 +1705,7 @@ class DCConCard extends BdApi.React.Component {
       {
         className: "dccon-card",
       },
-      BdApi.React.createElement("img", {
+      BdApi.React.createElement(DCConImage, {
         src: `${DCConProxyURL}${item.thumbId}`,
         style: { borderRadius: "8px" },
       }),

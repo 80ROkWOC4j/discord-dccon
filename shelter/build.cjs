@@ -21,7 +21,7 @@ async function main() {
     throw Error('Generated shelter plugin has no lifecycle');
   }
   // The shared plugin source receives a local compatibility object, never a global BdApi.
-  const bootstrap = `(() => {\n${await read('webpack.js')}\nconst dcconWebpack=captureWebpack(globalThis);\n` +
+  const bootstrap = `(() => {\n${await read('webpack.js')}\nconst dcconWebpack=captureWebpack(globalThis,DCConNative.hostMod==='vencord'?()=>globalThis.Vencord?.Webpack?.wreq:undefined);\n` +
     // The plugin ID also namespaces shelter storage.
     `const SHELTER_INJECTOR_PLUGINS={'discord-dccon':{js:${JSON.stringify(plugin)},local:true,update:false,` +
     `manifest:{name:'discord-dccon',author:'80ROkWOC4j',description:'discord-dccon running on shelter'},` +
@@ -48,7 +48,7 @@ async function main() {
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../LICENSE'), path.join(directory, 'LICENSE'));
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../THIRD_PARTY_NOTICES.md'), path.join(directory, 'THIRD_PARTY_NOTICES.md'));
   await fs.writeFile(path.join(standalone, 'shelter-version.json'), JSON.stringify({
-    channels: ['Stable', 'PTB', 'Canary'],
+    installLayout: 'desktop_core', channels: ['Stable', 'PTB', 'Canary'],
     revision, source: 'https://github.com/uwu/shelter', builds: 'https://github.com/uwu/shelter-builds', license: 'CC0-1.0',
   }, null, 2) + '\n');
   if (!process.argv.includes('--stage-only')) execFileSync('pwsh',
