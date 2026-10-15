@@ -199,7 +199,8 @@ for (const shell of shells) for (const hostMod of ['', 'vencord']) test(`desktop
     run(args);
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(installed,'runtime/channel.json'))),{channel,...(hostMod?{hostMod}:{})});
     assert.equal(await fs.readFile(path.join(installed,'original.js'),'utf8'),original);
-    assert.equal(JSON.parse(await fs.readFile(path.join(installed,'discord-dccon-install.json'))).kind,'discord-dccon-core');
+    // Windows PowerShell 5.1 writes UTF-8 with a BOM; this manifest is read by PowerShell.
+    assert.equal(JSON.parse((await fs.readFile(path.join(installed,'discord-dccon-install.json'),'utf8')).replace(/^\uFEFF/, '')).kind,'discord-dccon-core');
     await fs.access(path.join(installed,'runtime/shared-storage.cjs'));
     const loader=await fs.readFile(path.join(core,'index.js'),'utf8');
     await put(path.join(core,'index.js'),original);run(args);
