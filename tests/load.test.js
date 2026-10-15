@@ -124,7 +124,7 @@ test('stop notifications reach every listener even when listeners unsubscribe', 
   assert.deepEqual(calls, ['first', 'second']);
 });
 
-test('real React: click opens picker without Discord picker modules; close, manage and channel switching work', async () => {
+for (const touch of [false, true]) test(`real React (${touch ? 'touch' : 'mouse'}): picker focus, viewport changes, close, manage and channel switching work`, async () => {
   const {JSDOM, VirtualConsole} = require('jsdom');
   const React = require('react');
   const errors = [];
@@ -137,6 +137,10 @@ test('real React: click opens picker without Discord picker modules; close, mana
   global.window = dom.window;
   global.document = dom.window.document;
   global.IS_REACT_ACT_ENVIRONMENT = true;
+  window.matchMedia = () => ({matches: touch});
+  const viewport = new window.EventTarget();
+  Object.assign(viewport, {width: 1024, height: 768, offsetLeft: 0, offsetTop: 0});
+  Object.defineProperty(window, 'visualViewport', {value: viewport});
   const ReactDOM = require('react-dom');
   const {createRoot} = require('react-dom/client');
   const {DCConButton, events} = load('discord-dccon.plugin.js', {
@@ -145,6 +149,9 @@ test('real React: click opens picker without Discord picker modules; close, mana
     api: {React, ReactDOM},
   });
   const root = createRoot(document.getElementById('root'));
+  let outsideEvents = 0;
+  document.addEventListener('pointerdown', () => outsideEvents++);
+  document.addEventListener('click', () => outsideEvents++);
   const click = async (element) => {
     assert.ok(element, 'click target must exist');
     await React.act(async () => element.dispatchEvent(new window.MouseEvent('click', {bubbles: true})));
@@ -152,10 +159,27 @@ test('real React: click opens picker without Discord picker modules; close, mana
   try {
     await React.act(async () => root.render(React.createElement(DCConButton, {channelId: 'one'})));
     const trigger = document.querySelector('.dccon-trigger');
+    const pointer = new window.MouseEvent('pointerdown', {bubbles: true, cancelable: true});
+    await React.act(async () => trigger.dispatchEvent(pointer));
+    assert.equal(pointer.defaultPrevented, true);
     await click(trigger);
+    assert.equal(outsideEvents, 0, 'trigger must not activate Discord composer focus handlers');
     assert.ok(document.querySelector('[role="dialog"]'));
     assert.ok(document.querySelector('.dccon-search-input'));
+    assert.equal(document.activeElement === document.querySelector('.dccon-search-input'), !touch);
     assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    await React.act(async () => {
+      Object.assign(viewport, {width: 320, height: 280, offsetLeft: 40, offsetTop: 60});
+      window.dispatchEvent(new window.Event('resize'));
+      viewport.dispatchEvent(new window.Event('resize'));
+      viewport.dispatchEvent(new window.Event('scroll'));
+    });
+    const popup = document.querySelector('.dccon-popover');
+    assert.ok(popup, 'keyboard or zoom resize must not close the picker');
+    assert.equal(popup.style.width, '304px');
+    assert.equal(popup.style.height, '264px');
+    assert.equal(popup.style.left, '48px');
+    assert.equal(popup.style.top, '68px');
     await click(document.querySelectorAll('.dccon-popover-toolbar button')[2]);
     assert.ok(document.querySelector('.dccon-embedding-environment'));
     assert.equal(document.querySelector('.dccon-options'), null);

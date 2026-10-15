@@ -1,7 +1,7 @@
 /**
  * @name discord-dccon
  * @description 디스코드에서 디시콘을 쉽게 사용할 수 있게 도와주는 플러그인입니다.
- * @version 4.0.0-beta.1
+ * @version 4.0.0-beta.2
  * @author 80ROkWOC4j
  * @website https://github.com/80ROkWOC4j/discord-dccon
  * @source https://github.com/80ROkWOC4j/discord-dccon
@@ -124,7 +124,7 @@ function mountToolbar(Button) {
     pending = false;
     if (stopped) return;
     const active = new Set();
-    for (const editor of document.querySelectorAll('[role="textbox"][contenteditable="true"]')) {
+    for (const editor of document.querySelectorAll('[role="textbox"][contenteditable="true"], [class*="channelTextArea"] textarea')) {
       const composer = editor.closest('[class*="channelTextArea"]');
       const toolbar = composer?.querySelector('[class*="buttons_"]');
       const channelId = channelFor(editor);
@@ -294,7 +294,7 @@ const getDCCon = (idx) => {
 class DCConButton extends BdApi.React.Component {
   constructor(props) {
     super(props);
-    this.state = { active: false, page: "picker", left: 0, top: 0, height: 480 };
+    this.state = { active: false, page: "picker" };
     this.close = this.close.bind(this);
     this.refreshBuffer = () => { if (this.state.active) this.forceUpdate(); };
     this.onKeyDown = (event) => {
@@ -310,7 +310,9 @@ class DCConButton extends BdApi.React.Component {
     PluginEvents.subscribe("DCCON_CLOSE", this.close);
     PluginEvents.subscribe("DCCON_UNPATCH_ALL", this.close);
     PluginEvents.subscribe("DCCON_BUFFER_UPDATE", this.refreshBuffer);
-    window.addEventListener("resize", this.close);
+    window.addEventListener("resize", this.refreshBuffer);
+    window.visualViewport?.addEventListener("resize", this.refreshBuffer);
+    window.visualViewport?.addEventListener("scroll", this.refreshBuffer);
     document.addEventListener("keydown", this.onKeyDown, true);
   }
 
@@ -322,7 +324,9 @@ class DCConButton extends BdApi.React.Component {
     PluginEvents.unsubscribe("DCCON_CLOSE", this.close);
     PluginEvents.unsubscribe("DCCON_UNPATCH_ALL", this.close);
     PluginEvents.unsubscribe("DCCON_BUFFER_UPDATE", this.refreshBuffer);
-    window.removeEventListener("resize", this.close);
+    window.removeEventListener("resize", this.refreshBuffer);
+    window.visualViewport?.removeEventListener("resize", this.refreshBuffer);
+    window.visualViewport?.removeEventListener("scroll", this.refreshBuffer);
     document.removeEventListener("keydown", this.onKeyDown, true);
   }
 
@@ -331,26 +335,28 @@ class DCConButton extends BdApi.React.Component {
     if (this.state.active) this.setState({ active: false });
   }
 
-  toggle(event) {
+  toggle() {
     if (this.state.active) return this.close();
     PluginEvents.dispatch({ type: "DCCON_CLOSE" });
     currentChannelId = this.props.channelId;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const width = Math.min(520, window.innerWidth - 16);
-    const height = Math.min(540, window.innerHeight - 16);
     this.setState({
       active: true,
       page: "picker",
-      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
-      top: Math.max(8, rect.top - height - 8),
-      height,
     });
   }
 
   render() {
     const h = BdApi.React.createElement;
     const expanded = this.state.page === "picker" && activeQueue(this.props.channelId).length > 0;
-    const width = this.state.active ? Math.min(expanded ? 780 : 520, window.innerWidth - 16) : 520;
+    const viewport = window.visualViewport;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const x = viewport?.offsetLeft ?? 0, y = viewport?.offsetTop ?? 0;
+    const width = Math.min(expanded ? 780 : 520, viewportWidth - 16);
+    const height = Math.min(540, viewportHeight - 16);
+    const rect = this.button?.getBoundingClientRect();
+    const left = Math.max(x + 8, Math.min((rect?.right ?? x + width) - width, x + viewportWidth - width - 8));
+    const top = Math.max(y + 8, Math.min((rect?.top ?? y + height) - height - 8, y + viewportHeight - height - 8));
     return h("div", { className: (classes.textarea.buttonContainer ?? "") + " dccon-buttonContainer" },
       h("button", {
         type: "button",
@@ -359,7 +365,8 @@ class DCConButton extends BdApi.React.Component {
         "aria-haspopup": "dialog",
         "aria-expanded": this.state.active,
         ref: (button) => { this.button = button; },
-        onClick: (event) => this.toggle(event),
+        onPointerDown: (event) => { event.preventDefault(); event.stopPropagation(); },
+        onClick: (event) => { event.stopPropagation(); this.toggle(); },
       }, h(ManduIcon)),
       this.state.active && BdApi.ReactDOM.createPortal(
         h("div", { className: "dccon-overlay", onMouseDown: this.close },
@@ -367,7 +374,7 @@ class DCConButton extends BdApi.React.Component {
             className: "dccon-popover" + (expanded ? " dccon-popover-expanded" : ""),
             role: "dialog",
             "aria-label": "디시콘 선택",
-            style: { left: Math.max(8, this.state.left - (expanded ? 260 : 0)), top: this.state.top, height: this.state.height, width },
+            style: { left, top, height, width },
             onMouseDown: (event) => event.stopPropagation(),
           },
             expanded && h(BufferTray, {channelId: this.props.channelId}),
@@ -1567,7 +1574,7 @@ class DCConPanel extends BdApi.React.Component {
           h("svg", { "aria-hidden": true, width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2 },
             h("circle", { cx: 10, cy: 10, r: 6 }), h("path", { d: "m15 15 6 6" })),
           h("input", { className: "dccon-search-input", "aria-label": "디시콘 검색", placeholder: Embedding.enabled() ? "표정이나 상황으로 검색하기" : "디시콘 이름이나 팩 검색하기",
-            autoFocus: true, value: this.state.textFilter,
+            autoFocus: !window.matchMedia?.("(any-pointer: coarse)").matches, value: this.state.textFilter,
             onChange: e => this.changeSearch(e.target.value),
           }),
           this.state.textFilter && h("button", { type: "button", "aria-label": "검색 지우기", onClick: this.clearSearch }, "×")
@@ -2326,7 +2333,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
       h("p", null, "진단은 자동으로 제출되지 않으며, 메시지를 보내거나 입력 중인 내용을 변경하지 않습니다."),
       h(Button, { text: this.state.diagnosticReport ? "진단 정보 새로고침" : "진단 정보 만들기", onClick: () => {
         const report = inspectInstantSend();
-        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "4.0.0-beta.1", generatedAt: new Date().toISOString(), ...report }, null, 2),
+        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "4.0.0-beta.2", generatedAt: new Date().toISOString(), ...report }, null, 2),
           copyStatus: "" });
       } }),
       this.state.diagnosticReport && h("div", null,
@@ -2504,6 +2511,10 @@ module.exports = class DCCon {
 .dccon-popover button:focus-visible, .dccon-settings-panel button:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: -2px; }
 .dccon-trigger { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 8px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; color: var(--interactive-normal, #b5bac1); }
 .dccon-trigger:hover, .dccon-trigger:focus-visible, .dccon-trigger[aria-expanded="true"] { color: var(--interactive-active, #fff); background: var(--background-modifier-hover, #ffffff12); }
+.dccon-trigger, .dccon-popover button { touch-action: manipulation; }
+@media (any-pointer: coarse) {
+  .dccon-popover input, .dccon-settings-panel input { font-size: 16px; }
+}
 .dccon-buttonContainer { margin-left: 8px; }
 .dccon-overlay { position: fixed; inset: 0; z-index: 10000; }
 .dccon-popover { position: fixed; width: min(520px, calc(100vw - 16px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border-subtle, #80808033); border-radius: 8px; box-shadow: 0 8px 32px #0006; }

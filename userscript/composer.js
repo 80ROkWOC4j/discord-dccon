@@ -53,6 +53,6 @@ function createComposerBridge(page, document) {
       catch (error) {finish(error);}
     });
   }
-  return {targetFor,attachFiles,available:()=>[...document.querySelectorAll('[role="textbox"][contenteditable="true"]')].some(composerFor),dispose:()=>targets.clear()};
+  return {targetFor,attachFiles,available:()=>[...document.querySelectorAll('[role="textbox"][contenteditable="true"], [class*="channelTextArea"] textarea')].some(composerFor),dispose:()=>targets.clear()};
 }
 module.exports = {composerFor,createComposerBridge};

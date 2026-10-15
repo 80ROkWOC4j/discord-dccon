@@ -5,6 +5,33 @@ const {IDBFactory}=require('fake-indexeddb');
 const {mergeSetting}=require('../scripts/shared-storage.cjs');
 const {createConfig}=require('../userscript/config');
 const {createComposerBridge}=require('../userscript/composer');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+
+test('mobile Discord textarea mounts the toolbar and receives files without changing the draft',async()=>{
+ const {window}=new JSDOM('<form><div class="channelTextArea_mobile"><textarea>mobile draft</textarea><input type="file" multiple><div class="buttons_mobile"></div></div></form>',{url:'https://discord.com/channels/1/2'});
+ const document=window.document,editor=document.querySelector('textarea'),input=document.querySelector('input');
+ editor.getClientRects=()=>[{}];Object.defineProperty(input,'files',{value:[],writable:true});
+ const page={Event:window.Event,File:window.File,MutationObserver:window.MutationObserver,location:window.location,setTimeout,clearTimeout,
+  DataTransfer:class{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}};
+ const bridge=createComposerBridge(page,document),rendered=[];
+ const source=fs.readFileSync(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+ const context={module:{exports:{}},document,MutationObserver:window.MutationObserver,queueMicrotask,
+  BdApi:{Composer:bridge,Webpack:{getStore:()=>null},React:{createElement:(_,props)=>props},ReactDOM:{createRoot:()=>({render:props=>rendered.push(props),unmount(){}})}}};
+ vm.runInNewContext(source.slice(source.indexOf('function mountToolbar'),source.indexOf('// 다국어 처리를'))+'\nmodule.exports=mountToolbar;',context);
+ const stop=context.module.exports(()=>{});
+ try{
+  assert.equal(document.querySelectorAll('.dccon-toolbar-host').length,1);assert.equal(bridge.available(),true);
+  assert.equal(rendered[0].channelId,bridge.targetFor(editor));
+  input.addEventListener('change',()=>{
+   const item=document.createElement('li');item.setAttribute('data-list-item-id','attachments___mobile');
+   const name=document.createElement('span');name.className='filename_mobile';name.textContent=input.files[0].name;item.append(name);input.closest('form').append(item);
+  });
+  await bridge.attachFiles([new window.File(['test'],'mobile.gif')],rendered[0].channelId);
+  assert.equal(editor.value,'mobile draft');assert.equal(input.files[0].name,'mobile.gif');
+ }finally{stop();bridge.dispose();window.close();}
+});
 
 test('settings merge concurrent tabs without losing unrelated keys or same-list additions',async()=>{
  const indexedDB=new IDBFactory(),a=createConfig(indexedDB,mergeSetting),b=createConfig(indexedDB,mergeSetting);
