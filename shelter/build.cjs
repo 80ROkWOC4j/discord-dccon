@@ -43,15 +43,14 @@ async function main() {
   for (const name of ['bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js']) {
     await fs.copyFile(path.join(output, name), path.join(standalone, 'runtime', name));
   }
-  await fs.copyFile(path.join(__dirname, 'install-standalone.ps1'), path.join(standalone, 'install.ps1'));
-  await fs.copyFile(path.resolve(__dirname, '../install-betterdiscord.ps1'), path.join(betterdiscord, 'install.ps1'));
   await fs.writeFile(path.join(betterdiscord, 'discord-dccon.plugin.js'), source);
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../LICENSE'), path.join(directory, 'LICENSE'));
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../THIRD_PARTY_NOTICES.md'), path.join(directory, 'THIRD_PARTY_NOTICES.md'));
   await fs.writeFile(path.join(standalone, 'shelter-version.json'), JSON.stringify({
+    channels: ['Stable', 'PTB', 'Canary'],
     revision, source: 'https://github.com/uwu/shelter', builds: 'https://github.com/uwu/shelter-builds', license: 'CC0-1.0',
   }, null, 2) + '\n');
-  execFileSync('pwsh',
+  if (!process.argv.includes('--stage-only')) execFileSync('pwsh',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'package.ps1')], {stdio: 'inherit'});
   console.log(`Built discord-dccon: ${output}\nShelter submodule: ${revision}`);
 }

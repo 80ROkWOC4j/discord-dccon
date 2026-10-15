@@ -50,7 +50,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:GITHUB_REF_NAME
-          $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'discord-dccon.plugin.js', 'install.ps1')
+          $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'discord-dccon.plugin.js', 'install.ps1', 'install.sh')
           foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset" } }
           $existing = gh release view $tag --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {

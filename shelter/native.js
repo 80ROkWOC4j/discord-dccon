@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 function channelOptions(channel = 'Stable') {
   if (channel === 'Stable') return {origin: 'https://discord.com', directory: 'discord-dccon'};
+  if (channel === 'PTB') return {origin: 'https://ptb.discord.com', directory: 'discord-dccon-ptb'};
   if (channel === 'Canary') return {origin: 'https://canary.discord.com', directory: 'discord-dccon-canary'};
   throw Error('Unsupported Discord channel');
 }
