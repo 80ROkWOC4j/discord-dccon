@@ -22,4 +22,11 @@ const migrationBlock = '// BEGIN GENERATED SHARED STORAGE\nconst SHARED_STORAGE_
 const migrationPattern = /\/\/ BEGIN GENERATED SHARED STORAGE[\s\S]*?\/\/ END GENERATED SHARED STORAGE/;
 updated = migrationPattern.test(updated) ? updated.replace(migrationPattern, () => migrationBlock)
   : updated.replace('// Pinned libwebp WASM tools.', migrationBlock + '\n\n// Pinned libwebp WASM tools.');
-if (updated !== original) fs.writeFileSync(file, updated);
+if (updated !== original) {
+  // Installer tests build packages while other test processes read this file.
+  const temporary = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporary, updated);
+    fs.renameSync(temporary, file);
+  } finally {fs.rmSync(temporary, {force: true});}
+}
