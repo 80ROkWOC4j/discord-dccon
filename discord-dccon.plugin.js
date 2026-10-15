@@ -1,7 +1,7 @@
 /**
  * @name discord-dccon
  * @description 디스코드에서 디시콘을 쉽게 사용할 수 있게 도와주는 플러그인입니다.
- * @version 3.5.1
+ * @version 4.0.0-beta.1
  * @author 80ROkWOC4j
  * @website https://github.com/80ROkWOC4j/discord-dccon
  * @source https://github.com/80ROkWOC4j/discord-dccon
@@ -113,6 +113,7 @@ function mountToolbar(Button) {
   const store = BdApi.Webpack.getStore("SelectedChannelStore");
   let pending = false, stopped = false;
   function channelFor(editor) {
+    if (BdApi.Composer?.targetFor) return BdApi.Composer.targetFor(editor);
     for (let fiber = BdApi.ReactUtils.getInternalInstance(editor); fiber; fiber = fiber.return) {
       const channel = fiber.memoizedProps?.channel;
       if (channel?.id) return channel.id;
@@ -1102,7 +1103,7 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
   if (sending) sendingChannels.add(channelId);
   PluginEvents.dispatch({ type: "DCCON_BUFFER_UPDATE", channelId });
   const attempt = { startedAt, outcome: "진행 중", keepOpen, phase: "작업 대기",
-    mode: keepOpen ? "버퍼 누적" : "즉시 전송" };
+    mode: keepOpen ? "버퍼 누적" : BdApi.Composer?.attachFiles ? "입력창 첨부" : "즉시 전송" };
   const task = (channelTasks.get(channelId) ?? Promise.resolve()).then(async () => {
     lastSendAttempt = attempt;
     try {
@@ -1141,10 +1142,15 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
             if (generation !== bufferGeneration) throw Error("이미지 합치기가 중단되었습니다.");
           })];
         }
-        await sendImagesDirectly(files, channelId, attempt);
+        if (BdApi.Composer?.attachFiles) {
+          markSend(attempt, "입력창 첨부");
+          await BdApi.Composer.attachFiles(files, channelId);
+        } else {
+          await sendImagesDirectly(files, channelId, attempt);
+        }
         if (generation === bufferGeneration) updateQueue(channelId, []);
         sentCons = [...queued.map(entry => entry.con), ...(con ? [con] : [])];
-        markSend(attempt, "완료", { outcome: "전송 성공 확인", sentCount: files.length });
+        markSend(attempt, "완료", { outcome: BdApi.Composer?.attachFiles ? "입력창에 전달 완료" : "전송 성공 확인", sentCount: files.length });
       }
       if (sending) {
         let recent = loadData("recent", []);
@@ -1159,7 +1165,7 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
       attempt.error = sendErrorDetails(error);
       attempt.updatedAt = new Date().toISOString();
       BdApi.Logger.error("discord-dccon", "Failed to send discord-dccon:", error);
-      BdApi.UI.showToast("디시콘 전송 실패 (" + attempt.phase + "): " + error.message, { type: "error", timeout: 10000 });
+      BdApi.UI.showToast((BdApi.Composer?.attachFiles ? "디시콘 첨부 실패 (" : "디시콘 전송 실패 (") + attempt.phase + "): " + error.message, { type: "error", timeout: 10000 });
       return false;
     } finally {
       if (sending) sendingChannels.delete(channelId);
@@ -1201,11 +1207,11 @@ class BufferTray extends BdApi.React.Component {
     if (!entries.length && !busy) return null;
     return h("section", { className: "dccon-buffer", "aria-label": "전송 대기 디시콘" },
       h("div", { className: "dccon-buffer-heading" },
-        h("span", {role: "status"}, busy ? "전송 중…" : "모아둔 콘 " + entries.length + "/9"),
+        h("span", {role: "status"}, busy ? (BdApi.Composer?.attachFiles ? "첨부 중…" : "전송 중…") : "모아둔 콘 " + entries.length + "/9"),
         h("div", {className: "dccon-buffer-actions"},
           h("button", {type: "button", disabled: busy, onClick: () => removeBuffered(channelId)}, "전체 비우기"),
           h("button", {type: "button", className: "dccon-buffer-send", disabled: busy || !entries.length,
-            onClick: () => sendDCConMessage(null, {channelId})}, "전송"))),
+            onClick: () => sendDCConMessage(null, {channelId})}, BdApi.Composer?.attachFiles ? "입력창에 첨부" : "전송"))),
       h("div", {className: "dccon-buffer-preview"},
         h("div", {className: "dccon-buffer-items", "data-count": entries.length}, entries.map((entry, index) => h("button", {
         key: index, type: "button", disabled: busy, title: entry.con.title + " 제거",
@@ -1214,13 +1220,15 @@ class BufferTray extends BdApi.React.Component {
         h("span", {className: "dccon-buffer-order", "aria-hidden": true}, index + 1),
         h("span", {className: "dccon-buffer-remove", "aria-hidden": true}, "×"))))),
       h("button", {type: "button", className: "dccon-buffer-split", disabled: busy || entries.length !== 1,
-        title: "이미지 1개를 3×3으로 나눠 전송합니다. 애니메이션은 유지됩니다.",
-        onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, "9개로 쪼개서 보내기"),
+        title: "이미지 1개를 3×3으로 나눕니다. 애니메이션은 유지됩니다.",
+        onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, BdApi.Composer?.attachFiles ? "9개로 쪼개서 첨부" : "9개로 쪼개서 보내기"),
       h("button", {type: "button", className: "dccon-buffer-merge", disabled: busy || !this.state.mergeReady,
         title: this.state.mergeReason || "선택 순서대로 가로로 이어붙입니다. 원본 크기와 애니메이션을 유지합니다.",
-        onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, "합쳐서 전송"),
+        onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, BdApi.Composer?.attachFiles ? "합쳐서 첨부" : "합쳐서 전송"),
       this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason),
-      h("p", {className: "dccon-buffer-hint"}, "예상 배치 · 기기마다 크기는 달라질 수 있어요. 일반 클릭은 콘을 하나 더 추가해 전송합니다."));
+      h("p", {className: "dccon-buffer-hint"}, BdApi.Composer?.attachFiles
+        ? "일반 클릭은 콘을 하나 더 추가해 입력창에 첨부합니다. Discord에서 직접 전송하세요."
+        : "예상 배치 · 기기마다 크기는 달라질 수 있어요. 일반 클릭은 콘을 하나 더 추가해 전송합니다."));
   }
 }
 class BufferImage extends BdApi.React.Component {
@@ -1590,7 +1598,9 @@ class DCConPanel extends BdApi.React.Component {
                   !this.state.dccons.length && h("button", { type: "button", onClick: this.props.onManage }, "팩 추가하기"))
         )
       ),
-      h("div", { className: "dccon-footer" }, "클릭: 누적 콘과 함께 전송 · Shift+클릭: 모아두기 (최대 9개)")
+      h("div", { className: "dccon-footer" }, BdApi.Composer?.attachFiles
+        ? "클릭: 입력창에 첨부 · Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
+        : "클릭: 누적 콘과 함께 전송 · Shift+클릭: 모아두기 (최대 9개)")
     );
   }
 }
@@ -1807,6 +1817,11 @@ class SavedDCConCard extends BdApi.React.Component {
 }
 
 function inspectInstantSend() {
+  if (BdApi.Composer?.attachFiles) return {
+    mode: "입력창 첨부 · 직접 전송",
+    composerAvailable: BdApi.Composer.available?.() ?? null,
+    lastSendAttempt: lastSendAttempt ? structuredClone(lastSendAttempt) : "아직 첨부 시도 없음",
+  };
   const { Webpack } = BdApi;
   const report = {};
   const check = (name, inspect) => {
@@ -2311,7 +2326,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
       h("p", null, "진단은 자동으로 제출되지 않으며, 메시지를 보내거나 입력 중인 내용을 변경하지 않습니다."),
       h(Button, { text: this.state.diagnosticReport ? "진단 정보 새로고침" : "진단 정보 만들기", onClick: () => {
         const report = inspectInstantSend();
-        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "3.5.1", generatedAt: new Date().toISOString(), ...report }, null, 2),
+        this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "4.0.0-beta.1", generatedAt: new Date().toISOString(), ...report }, null, 2),
           copyStatus: "" });
       } }),
       this.state.diagnosticReport && h("div", null,

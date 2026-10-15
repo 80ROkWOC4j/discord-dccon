@@ -37,6 +37,13 @@ Discord 업데이트 하면서 일부 파일이 바뀌면 작동하지 않을 �
 
 [Release](https://github.com/80ROkWOC4j/discord-dccon/releases)에서 **`discord-dccon.plugin.js`**를 다운로드합니다. Discord의 **설정 → BetterDiscord → 플러그인 → 플러그인 폴더 열기**로 연 폴더에 파일을 넣고 플러그인을 활성화합니다.
 
+### 웹 Discord에서 사용하기 (Violentmonkey · 시험 버전)
+
+웹 Discord 입력창에 디시콘을 첨부할 수 있습니다. **데스크톱 Firefox + Violentmonkey**에서 동작합니다.
+
+1. Firefox에 [Violentmonkey](https://violentmonkey.github.io/get-it/) 확장 기능을 설치합니다.
+2. **[디시콘 유저스크립트 설치](https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.0-beta.1/discord-dccon.user.js)**를 클릭하고, 열린 Violentmonkey 화면에서 **설치**를 누릅니다.
+
 <details>
 <summary>PTB·Canary, 제거 및 기타 옵션</summary>
 

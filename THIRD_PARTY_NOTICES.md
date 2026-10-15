@@ -1,3 +1,14 @@
+# Independent attachment userscript
+
+The attachment userscript bundles React, ReactDOM and Scheduler from the installed
+React 19.3.0 dependency set (MIT). Their MIT license is embedded in the generated
+userscript. It does not bundle the shelter runtime.
+
+The attachment userscript also bundles the unmodified SHA-256 implementation from
+@noble/hashes 2.4.0 (MIT), copyright 2022 Paul Miller.
+Source: https://github.com/paulmillr/noble-hashes . Its full license is embedded in
+the generated userscript and copied to `noble-hashes-LICENSE.txt` in the output directory.
+
 # WebP conversion dependencies
 
 The plugin downloads these pinned WebAssembly codecs on first use and verifies their SHA-256 hashes:
