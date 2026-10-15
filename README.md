@@ -123,26 +123,36 @@ Shift+클릭한 콘은 **모아둔 콘** 패널에 예상 메시지 배치로 �
 
 분할과 합치기는 무손실 WebP로 처리합니다. 최초 사용 시 인코더를 다운로드해 캐시하며, 빠른 압축 설정을 사용하므로 출력 용량이 늘어날 수 있습니다.
 
-합친 WebP는 이미지 캐시 폴더의 `merged` 아래에 저장합니다. 같은 콘을 같은 순서로 다시 합치면 재시작 후에도 캐시를 재사용하며, 순서나 중복 개수가 다른 조합은 별도로 저장합니다.
+합친 WebP는 공통 캐시 폴더의 `merged` 아래에 저장합니다. 같은 콘을 같은 순서로 다시 합치면 재시작 후에도 캐시를 재사용하며, 순서나 중복 개수가 다른 조합은 별도로 저장합니다.
+
+### 공통 설정·데이터 경로
+
+BetterDiscord·스탠드얼론과 Stable·Canary는 같은 OS 사용자 계정에서 설정·등록 목록·즐겨찾기·개인 이미지·캐시를 모두 공유합니다. 코드가 OS의 앱 데이터 폴더를 기준으로 경로를 계산합니다.
+
 <details>
-<summary>이미지 캐시 경로 — OS·채널별</summary>
+<summary>로컬에 저장되는 것들 상세 설명</summary>
 
-팩 추가 시 전체 콘을 미리 다운로드해 재사용합니다. 기본 캐시 경로는 다음과 같습니다. BetterDiscord는 채널 간 공유하고, standalone은 채널별로 분리합니다.
+| OS | 공통 데이터 경로 |
+| --- | --- |
+| Windows | `%APPDATA%\discord-dccon\` |
+| macOS | `~/Library/Application Support/discord-dccon/` |
+| Linux | `~/.config/discord-dccon/` |
 
-| OS | 설치 방식 | 채널 | 캐시 경로 |
-| --- | --- | --- | --- |
-| Windows | BetterDiscord | stable / ptb / canary (공유) | `%APPDATA%\BetterDiscord\plugins\discord-dccon-cache\` |
-| Windows | standalone | stable | `%APPDATA%\discord-dccon\discord-dccon-cache\` |
-| Windows | standalone | ptb | `%APPDATA%\discord-dccon-ptb\discord-dccon-cache\` |
-| Windows | standalone | canary | `%APPDATA%\discord-dccon-canary\discord-dccon-cache\` |
-| macOS | BetterDiscord | stable / ptb / canary (공유) | `~/Library/Application Support/BetterDiscord/plugins/discord-dccon-cache/` |
-| macOS | standalone | stable | `~/Library/Application Support/discord-dccon/discord-dccon-cache/` |
-| macOS | standalone | ptb | `~/Library/Application Support/discord-dccon-ptb/discord-dccon-cache/` |
-| macOS | standalone | canary | `~/Library/Application Support/discord-dccon-canary/discord-dccon-cache/` |
+```text
+config.json               공통 설정과 완료된 데이터 형식 버전
+discord-dccon-library/     직접 추가한 이미지
+cache/
+  images/                 개별 콘 WebP
+  merged/                 합친 콘 WebP
+  webp-codecs/            인코더
+  models/                 임베딩 모델·런타임
+  vectors/<모델·전처리 버전>/
+    <이미지 키의 SHA-256>.json
+```
 
-BetterDiscord의 플러그인 폴더를 변경했다면 해당 폴더 아래의 `discord-dccon-cache`를 사용합니다.
+팩을 추가하면 이미지를 다운로드해 `cache/images`에 보관합니다. 벡터는 `(path, ext)` 이미지 키별 파일에 저장하며, 검색은 공통 등록 목록을 대상으로 합니다. 콘을 제거해도 공유 캐시의 벡터는 삭제하지 않습니다.
 
-각 캐시 폴더의 `webp-codecs`에는 이미지 변환 코덱, `embedding-gemma2`에는 임베딩 모델과 벡터가 저장됩니다. 캐시 용량 제한과 자동 정리는 없습니다.
+캐시 용량 제한과 자동 정리는 없습니다.
 
 </details>
 

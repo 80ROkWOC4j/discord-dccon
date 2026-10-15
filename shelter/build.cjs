@@ -31,6 +31,7 @@ async function main() {
   new vm.Script(bootstrap);
   await fs.writeFile(path.join(output, 'bootstrap.js'), bootstrap);
   for (const name of ['main.cjs', 'preload.cjs', 'native.js']) await fs.copyFile(path.join(__dirname, name), path.join(output, name));
+  await fs.copyFile(path.join(__dirname, '../scripts/shared-storage.cjs'), path.join(output, 'shared-storage.cjs'));
   const packages = path.resolve(__dirname, '../artifacts/dist');
   const standalone = path.join(packages, 'standalone'), betterdiscord = path.join(packages, 'betterdiscord');
   // Rebuild staging directories so renamed files cannot remain in release archives.
@@ -40,7 +41,7 @@ async function main() {
   }
   await fs.mkdir(path.join(standalone, 'runtime'), {recursive: true});
   await fs.mkdir(betterdiscord, {recursive: true});
-  for (const name of ['bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js']) {
+  for (const name of ['bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js', 'shared-storage.cjs']) {
     await fs.copyFile(path.join(output, name), path.join(standalone, 'runtime', name));
   }
   await fs.writeFile(path.join(betterdiscord, 'discord-dccon.plugin.js'), source);

@@ -133,6 +133,7 @@ install_standalone() {
 
   mkdir "$stage/runtime"
   for file in bootstrap.js main.cjs preload.cjs native.js; do cp "$build/$file" "$stage/runtime/$file"; done
+  if [[ -f "$build/shared-storage.cjs" ]]; then cp "$build/shared-storage.cjs" "$stage/runtime/shared-storage.cjs"; fi
   printf '{"channel":"%s"}\n' "$channel" > "$stage/runtime/channel.json"
   if [[ -d "$installed" ]]; then cp "$installed/original.js" "$stage/original.js";
   else cp "$core/index.js" "$stage/original.js"; fi

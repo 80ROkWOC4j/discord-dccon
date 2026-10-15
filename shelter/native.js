@@ -11,22 +11,25 @@ function channelOptions(channel = 'Stable') {
 
 function prepareDataRoot(appData, channel = 'Stable') {
   const syncFs = require('node:fs');
-  const root = path.join(appData, channelOptions(channel).directory);
+  channelOptions(channel);
+  const root = path.join(appData, 'discord-dccon');
   syncFs.mkdirSync(root, {recursive: true});
   return root;
 }
 
-function resolveFile(root, value) {
-  if (typeof value !== 'string' || !value.startsWith('/dccon/')) throw Error('Invalid cache path');
-  const result = path.resolve(root, value.slice('/dccon/'.length));
+function resolveFile(root, value, prefix = '/dccon/') {
+  if (typeof value !== 'string' || !value.startsWith(prefix)) throw Error('Invalid cache path');
+  const result = path.resolve(root, value.slice(prefix.length));
   const relative = path.relative(root, result);
   if (relative.startsWith('..') || path.isAbsolute(relative)) throw Error('Cache path escapes data directory');
   return result;
 }
-function createFiles(root, legacyRoot) {
+function createFiles(root, legacyRoot, cacheRoot) {
   return async function file(method, args) {
     const [name, ...rest] = args;
-    const resolved = resolveFile(root, name);
+    const resolve = value => cacheRoot && typeof value === 'string' && value.startsWith('/cache/')
+      ? resolveFile(cacheRoot, value, '/cache/') : resolveFile(root, value);
+    const resolved = resolve(name);
     switch (method) {
       case 'readFile':
         try {return await fs.readFile(resolved, ...rest);}
@@ -37,13 +40,15 @@ function createFiles(root, legacyRoot) {
           return fs.readFile(resolveFile(legacyRoot, name), ...rest);
         }
       case 'unlink':
-        if (!/^\/dccon\/discord-dccon-library\/[a-f0-9]{64}$/.test(name)) throw Error('Invalid personal image path');
+        if (!/^\/dccon\/discord-dccon-library\/[a-f0-9]{64}$/.test(name) &&
+            !/^\/(?:cache\/(?:images|merged|webp-codecs|models|vectors\/[a-zA-Z0-9-]+)|dccon\/discord-dccon-library)\/[^/]+\.tmp-[a-z0-9-]+$/.test(name))
+          throw Error('Invalid personal image or temporary cache path');
         try {return await fs.unlink(resolved);}
         catch (error) {if (error.code !== 'ENOENT') throw error;}
         return;
       case 'writeFile': return fs.writeFile(resolved, ...rest);
       case 'mkdir': return fs.mkdir(resolved, ...rest);
-      case 'rename': return fs.rename(resolved, resolveFile(root, rest[0]));
+      case 'rename': return fs.rename(resolved, resolve(rest[0]));
       default: throw Error('Unsupported filesystem operation');
     }
   };

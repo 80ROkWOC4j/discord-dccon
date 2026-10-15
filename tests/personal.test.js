@@ -18,7 +18,7 @@ function harness(t, options = {}) {
     navigator: {clipboard: {readText: options.clipboard || (async () => url)}},
     createImageBitmap: async () => ({close() {}}),
     BdApi: {
-      Plugins: {folder: dir},
+      Plugins: {folder: dir, cacheFolder: path.join(dir, "cache")},
       Data: {load: (_, key) => data[key], save: (_, key, value) => { data[key] = value; }},
       Net: {fetch: async (...args) => {calls.push(args); return options.fetch ? options.fetch(...args) : {status: 200, arrayBuffer: async () => png};}},
       Webpack: {getByKeys: () => ({}), getStore: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}},

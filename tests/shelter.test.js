@@ -72,17 +72,18 @@ test('upload lookup includes initial runtime factories outside chunk push', () =
   assert.equal(cache[11], undefined);
 });
 
-test('shelter storage returns independent snapshots and imports only once', () => {
-  const store = {};
+test('shelter imports its legacy snapshot through common JSON and never updates IndexedDB settings', async () => {
+  const store = {dcconData: {dccons: [{info: {title: 'original'}}]}};
   const shelter = {plugin: {store, flushStore() {}}, flux: {storesFlat: {}}};
-  const native = {initialData: {dccons: [{info: {title: 'original'}}]}};
+  const calls = [];
+  const native = {config: async (method, args) => {calls.push({method,args}); return {version:2,settings:args[0]};}};
   const {BdApi} = createAdapter(shelter, native, {});
-  const packs = BdApi.Data.load('discord-dccon', 'dccons');
+  const imported = await BdApi.Config.open(), packs = imported.settings.dccons;
   packs[0].info.title = 'changed';
   assert.equal(BdApi.Data.load('discord-dccon', 'dccons')[0].info.title, 'original');
-  BdApi.Data.save('discord-dccon', 'dccons', packs);
-  const second = createAdapter(shelter, {initialData: {}}, {});
-  assert.equal(second.BdApi.Data.load('discord-dccon', 'dccons')[0].info.title, 'changed');
+  await BdApi.Config.save('dccons', packs, []);
+  assert.equal(calls[1].method, 'save');
+  assert.equal(store.dcconData.dccons[0].info.title, 'original');
 });
 
 test('image sends use shelter Discord REST, never an ambiguous HTTP export', async () => {
@@ -137,16 +138,16 @@ test('adapter disposal aborts old downloads without reusing IDs after restart', 
   assert.equal(aborted.length, 1);
 });
 
-test('channel data directories are separate and preserve existing files', async t => {
+test('Stable and Canary share the same data directory and preserve existing files', async t => {
   const appData = await fs.mkdtemp(path.join(os.tmpdir(), 'discord-dccon-path-test-'));
   t.after(() => fs.rm(appData, {recursive: true, force: true}));
   const current = prepareDataRoot(appData), canary = prepareDataRoot(appData, 'Canary');
   assert.equal(current, path.join(appData, 'discord-dccon'));
-  assert.equal(canary, path.join(appData, 'discord-dccon-canary'));
+  assert.equal(canary, current);
   await fs.writeFile(path.join(current, 'saved'), 'data');
   assert.equal(prepareDataRoot(appData), current);
   assert.equal(await fs.readFile(path.join(current, 'saved'), 'utf8'), 'data');
-  await assert.rejects(fs.access(path.join(canary, 'saved')));
+  assert.equal(await fs.readFile(path.join(canary, 'saved'), 'utf8'), 'data');
 });
 
 test('native bridge confines writes and reuses legacy binary cache read-only', async t => {
@@ -204,7 +205,7 @@ test('plugin starts after first-store retry without PoC status APIs and cleans u
   assert.equal(context.DCConShelterStatus, undefined);
 });
 
-for (const channel of ['Stable', 'Canary']) test(`injector connects ${channel} and restricts IPC and CSP to its origin`, async () => {
+for (const platform of ['win32', 'linux']) for (const channel of ['Stable', 'Canary']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP to its origin`, async () => {
   const events = new Map();
   let ready, onHeaders;
   const electron = {app: {getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle() {}},
@@ -216,9 +217,12 @@ for (const channel of ['Stable', 'Canary']) test(`injector connects ${channel} a
   function load(name) {
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
+    if (name === 'node:process') return {platform};
+    if (name === './shared-storage.cjs') return require('../scripts/shared-storage.cjs');
     if (name === './native') return {allowedDownload, channelOptions, prepareDataRoot: (base, selected) => {
       assert.equal(selected, channel);
-      return path.join(base, channelOptions(selected).directory);
+      assert.equal(base, platform === 'linux' ? path.join(os.tmpdir(), '.config') : os.tmpdir());
+      return path.join(base, 'discord-dccon');
     }};
     return require(name);
   }
@@ -231,7 +235,8 @@ for (const channel of ['Stable', 'Canary']) test(`injector connects ${channel} a
   const event = {sender: {id: 7}};
   events.get('dccon:init')(event);
   assert.equal(event.returnValue.originalPreload, '/discord/preload.js');
-  assert.equal(event.returnValue.initialData.embeddingEnabled, false);
+  assert.equal(event.returnValue.initialData, undefined);
+  assert.equal(event.returnValue.cacheRoot, path.join(event.returnValue.dataRoot, 'cache'));
   const origin = channelOptions(channel).origin;
   assert.equal(event.returnValue.origin, origin);
   const frame = {url: origin + '/channels/@me'};

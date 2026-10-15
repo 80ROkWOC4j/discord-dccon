@@ -3,12 +3,16 @@ const electron = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const {download, prepareDataRoot, channelOptions} = require('./native');
+const {createConfigStore} = require('./shared-storage.cjs');
 const {app, ipcMain, net} = electron;
 let channel = 'Stable';
 try {channel = JSON.parse(fs.readFileSync(path.join(__dirname, 'channel.json'), 'utf8')).channel || 'Stable';}
 catch (error) {if (error.code !== 'ENOENT') throw error;}
 const {origin} = channelOptions(channel);
-const dataRoot = prepareDataRoot(app.getPath('appData'), channel);
+const dataRoot = prepareDataRoot(require('node:process').platform === 'linux'
+  ? path.join(app.getPath('home'), '.config') : app.getPath('appData'), channel);
+const cacheRoot = path.join(dataRoot, 'cache');
+const configStore = createConfigStore({root: dataRoot, vectorSpec: 'q8-image560-video6x280-v2'});
 const requests = new Map(), preloads = new Map();
 const bundle = fs.readFileSync(path.join(__dirname, 'bootstrap.js'), 'utf8');
 function trusted(event) {
@@ -18,15 +22,17 @@ function trusted(event) {
 ipcMain.on('dccon:init', event => {
   if (!preloads.has(event.sender.id)) {event.returnValue = null; return;}
   const legacyRoot = path.join(app.getPath('appData'), 'BetterDiscord', 'plugins');
-  let initialData = {};
-  try {initialData = JSON.parse(fs.readFileSync(path.join(legacyRoot, 'discord-dccon.config.json'), 'utf8'));} catch {}
-  // Never start a large model download just by replacing the client mod.
-  initialData.embeddingEnabled = false;
-  event.returnValue = {bundle, origin, dataRoot, legacyRoot, initialData, originalPreload: preloads.get(event.sender.id)};
+  event.returnValue = {bundle, origin, dataRoot, cacheRoot, legacyRoot, originalPreload: preloads.get(event.sender.id)};
 });
 ipcMain.on('dccon:abort', (event, id) => {
   trusted(event);
   requests.get(`${event.sender.id}:${id}`)?.abort();
+});
+ipcMain.handle('dccon:config', async (event, method, args) => {
+  trusted(event);
+  if (!['open', 'save'].includes(method)) throw Error('Invalid configuration operation');
+  try {return await configStore[method](...args);}
+  catch (error) {return {error: {message: error.message, code: error.code}};}
 });
 ipcMain.handle('dccon:fetch', async (event, id, input, options) => {
   trusted(event);

@@ -14,8 +14,8 @@ const mergedFixture = Buffer.from('UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAAAAAAAAQU5JT
 function mergedCache(t, {native = false, writeFails = false} = {}) {
   const folder = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dccon-merged-cache-'));
   t.after(() => fs.rmSync(folder, {recursive: true, force: true}));
-  const nativeFile = require('../shelter/native').createFiles(folder);
-  const filesystem = Object.fromEntries(['readFile', 'mkdir', 'writeFile', 'rename'].map(method => [method, (...args) => {
+  const nativeFile = require('../shelter/native').createFiles(folder, undefined, path.join(folder, "cache"));
+  const filesystem = Object.fromEntries(['readFile', 'mkdir', 'writeFile', 'rename', 'unlink'].map(method => [method, (...args) => {
     const callback = args.pop();
     if (writeFails && method === 'writeFile') return callback(Error('disk full'));
     // BetterDiscord defaults to UTF-8; binary cache reads must pass null explicitly.
@@ -26,7 +26,7 @@ function mergedCache(t, {native = false, writeFails = false} = {}) {
   const load = () => {
     const h = api({require: name => name === 'fs' ? filesystem : native && name === 'path'
       ? {join: (...parts) => parts.join('/'), dirname: value => value.slice(0, value.lastIndexOf('/'))} : require(name)});
-    h.BdApi.Plugins = {folder: native ? '/dccon' : folder};
+    h.BdApi.Plugins = {folder: native ? '/dccon' : folder, cacheFolder: native ? '/cache' : path.join(folder, 'cache')};
     h.errors = [];
     h.BdApi.Logger = {error: (...args) => h.errors.push(args)};
     return h;
@@ -45,7 +45,7 @@ test('merged cache coalesces requests, persists after reload, and keys include o
   assert.equal(a, b);
   const key = require('node:crypto').createHash('sha256').update(JSON.stringify({type: 'merged', version: 1,
     images: pair.map(({con}) => [con.path, con.ext])})).digest('hex');
-  const target = path.join(folder, 'discord-dccon-cache', 'merged', key);
+  const target = path.join(folder, 'cache', 'merged', key);
   assert.deepEqual(fs.readFileSync(target), mergedFixture);
   assert.equal(a.type, 'image/webp');
   assert.equal(a.name, 'dccon.webp');
@@ -68,10 +68,10 @@ test('merged cache rejects unreadable data and failed composition is retried wit
   await assert.rejects(h.getMergedImage(entries, () => {}), /conversion failed/);
   await assert.rejects(h.getMergedImage(entries, () => {}), /conversion failed/);
   assert.equal(encodes, 2);
-  assert.equal(fs.existsSync(path.join(folder, 'discord-dccon-cache', 'merged')), false);
+  assert.equal(fs.existsSync(path.join(folder, 'cache', 'merged')), false);
   h.setMergeForTest(async () => {encodes++; return new File([mergedFixture], 'dccon.webp', {type: 'image/webp'});});
   await h.getMergedImage(entries, () => {});
-  const directory = path.join(folder, 'discord-dccon-cache', 'merged'), target = path.join(directory, fs.readdirSync(directory)[0]);
+  const directory = path.join(folder, 'cache', 'merged'), target = path.join(directory, fs.readdirSync(directory)[0]);
   for (const invalid of [Buffer.alloc(0), Buffer.from('corrupt'), mergedFixture.subarray(0, 10), mergedFixture.subarray(0, 40)]) {
     fs.writeFileSync(target, invalid);
     await h.getMergedImage(entries, () => {});
@@ -104,11 +104,11 @@ test('cancelled merged requests cannot write a cache and a later request can ret
   active = false;
   finish(new File([mergedFixture], 'dccon.webp', {type: 'image/webp'}));
   await rejected;
-  assert.equal(fs.existsSync(path.join(folder, 'discord-dccon-cache', 'merged')), false);
+  assert.equal(fs.existsSync(path.join(folder, 'cache', 'merged')), false);
   active = true;
   h.setMergeForTest(async () => new File([mergedFixture], 'dccon.webp', {type: 'image/webp'}));
   await h.getMergedImage(entries, () => {});
-  assert.equal(fs.readdirSync(path.join(folder, 'discord-dccon-cache', 'merged')).length, 1);
+  assert.equal(fs.readdirSync(path.join(folder, 'cache', 'merged')).length, 1);
 });
 test("merge eligibility requires 2-3 animations with identical duration and repetitions and caches metadata", async () => {
   const timings = { 1: [80, 120], 2: [50, 150], 3: [50, 100], 4: [200], 5: [80, 120] };

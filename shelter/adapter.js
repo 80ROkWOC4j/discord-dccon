@@ -19,11 +19,6 @@ function createAdapter(shelter, native, webpack) {
       if (!localeListeners.size) {localeObserver?.disconnect(); localeObserver = null;}
     },
   };
-  if (!store.dcconImported) {
-    store.dcconData = clone(native.initialData);
-    store.dcconImported = true;
-    shelter.plugin.flushStore();
-  }
   const fs = Object.fromEntries(['readFile', 'writeFile', 'mkdir', 'rename', 'unlink'].map(method => [method, (...args) => {
     const callback = args.pop();
     native.file(method, args).then(value => callback(null, value), error => callback(error));
@@ -81,10 +76,13 @@ function createAdapter(shelter, native, webpack) {
         return webpack.getByKeys(...keys);
       },
       getStore: name => shelter.flux.storesFlat[name]},
-    Plugins: {folder: '/dccon'},
+    Plugins: {folder: '/dccon', dataFolder: '/dccon', cacheFolder: '/cache'},
+    Config: {
+      open: () => native.config('open', [clone(store.dcconData || {})]),
+      save: (key, value, before) => native.config('save', [key, value, before]),
+    },
     Data: {
       load: (_, key) => clone(store.dcconData?.[key]),
-      save(_, key, value) {store.dcconData = {...clone(store.dcconData), [key]: clone(value)}; shelter.plugin.flushStore();},
     },
     Net: {fetch: fetchNative}, Logger: {error: (...args) => console.error('[discord-dccon shelter]', ...args)},
     UI: {showToast: (content, options = {}) => shelter.ui.showToast({title: 'discord-dccon', content,

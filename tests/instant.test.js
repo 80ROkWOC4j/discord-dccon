@@ -42,7 +42,7 @@ function harness({uploadFails = false, postFails = false, missing = false, clean
     get() {}, put() {}, del() {}, post() { throw new Error('wrong REST module'); },
   }));
   // Match BetterDiscord: callbacks wrap synchronous filesystem operations; no promises export.
-  const polyfillFs = Object.fromEntries(['readFile', 'mkdir', 'writeFile', 'rename'].map(method => [method,
+  const polyfillFs = Object.fromEntries(['readFile', 'mkdir', 'writeFile', 'rename', 'unlink'].map(method => [method,
     (...args) => {
       const callback = args.pop();
       try {
@@ -54,7 +54,7 @@ function harness({uploadFails = false, postFails = false, missing = false, clean
   ]));
   const pluginRequire = name => name === 'fs' && callbackFs ? polyfillFs : require(name);
   const context = {require: pluginRequire, URL, module: {exports: {}}, Blob, File, structuredClone, setTimeout, clearTimeout, BdApi: {
-    Plugins: {folder: cacheDirectory}, React: {Component: class {}},
+    Plugins: {folder: cacheDirectory, cacheFolder: cacheDirectory && path.join(cacheDirectory, "cache")}, React: {Component: class {}},
     Data: {load: (_, key) => data[key], save: (_, key, value) => { data[key] = value; }},
     Webpack: {getStore: () => ({getUploads: getDraft}), getModule: filter => modules.find(filter), getByKeys: () => ({}),
       Filters: {byKeys: (...keys) => value => keys.every(key => key in value)}},
@@ -396,13 +396,13 @@ test('download failure creates no cached file and buffer is unchanged', async t 
   const {api} = harness({cacheDirectory: directory, fetchFails: true});
   assert.equal(await api.sendDCConMessage(con, {keepOpen: true}), false);
   assert.equal(api.activeQueue('test-channel').length, 0);
-  assert.equal(fs.existsSync(path.join(directory, 'discord-dccon-cache')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'cache/images')), false);
 });
 
 test('new downloads are cached as WebP, and cache reads need no codec or download', async t => {
   const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dccon-webp-test-'));
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
-  const cache = path.join(directory, 'discord-dccon-cache'); fs.mkdirSync(cache);
+  const cache = path.join(directory, 'cache/images'); fs.mkdirSync(cache, {recursive: true});
   const file = path.join(cache, require('node:crypto').createHash('sha256').update('image:png').digest('hex'));
   const original = Buffer.from([1, 2, 3]);
   const webp = Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA', 'base64');
@@ -423,7 +423,7 @@ test('new downloads are cached as WebP, and cache reads need no codec or downloa
 test('conversion failure does not send or cache original bytes', async t => {
   const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dccon-webp-fail-'));
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
-  const cache = path.join(directory, 'discord-dccon-cache'); fs.mkdirSync(cache);
+  const cache = path.join(directory, 'cache/images'); fs.mkdirSync(cache, {recursive: true});
   const file = path.join(cache, require('node:crypto').createHash('sha256').update('image:png').digest('hex'));
   const {api, calls} = harness({cacheDirectory: directory});
   api.WebPCache.convert = async () => {throw Error('conversion failed');};
@@ -438,7 +438,7 @@ test('empty cache file is fetched again; unsafe image identifiers stay within ca
   const {api, calls} = harness({cacheDirectory: directory});
   const unsafe = {...con, path: '../../outside'};
   await api.getDCConImage(unsafe);
-  const cache = path.join(directory, 'discord-dccon-cache');
+  const cache = path.join(directory, 'cache/images');
   const name = fs.readdirSync(cache)[0];
   assert.match(name, /^[a-f0-9]{64}$/);
   fs.writeFileSync(path.join(cache, name), '');
@@ -472,7 +472,7 @@ test('BetterDiscord UTF-8 default cannot corrupt binary image bytes after cache 
   const bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128, 254];
   const first = harness({cacheDirectory: directory, callbackFs: true, downloadBytes: bytes});
   await first.api.getDCConImage(con);
-  const cached = fs.readFileSync(path.join(directory, 'discord-dccon-cache', fs.readdirSync(path.join(directory, 'discord-dccon-cache'))[0]));
+  const cached = fs.readFileSync(path.join(directory, 'cache/images', fs.readdirSync(path.join(directory, 'cache/images'))[0]));
   assert.deepEqual([...cached], bytes);
   const second = harness({cacheDirectory: directory, callbackFs: true, fetchFails: true});
   assert.equal(await second.api.sendDCConMessage(con), true);

@@ -105,7 +105,7 @@ test('codec downloads are pinned, cached offline, coalesced, and reject altered 
   t.after(() => fs.rmSync(folder, {recursive: true, force: true}));
   let fetches = 0, offline = false, corrupt = false;
   const context = {module: {exports: {}}, require, AbortController, TextDecoder,
-    BdApi: {Plugins: {folder}, React: {Component: class {}}, Net: {fetch: async url => {
+    BdApi: {Plugins: {folder, cacheFolder: path.join(folder, "cache")}, React: {Component: class {}}, Net: {fetch: async url => {
       fetches++; if (offline) throw Error('offline');
       const name = url.split('/').pop();
       return {arrayBuffer: async () => corrupt ? Buffer.from('tampered') : fs.readFileSync(path.join(__dirname, '../node_modules/@libwebp-wasm/gif2webp/es', name))};
@@ -119,7 +119,7 @@ test('codec downloads are pinned, cached offline, coalesced, and reject altered 
   await codec.runtime('gif', codec.generation);
   assert.equal(fetches, 2);
   codec.stop(); offline = false; corrupt = true;
-  fs.writeFileSync(path.join(folder, 'discord-dccon-cache/webp-codecs', codec.specs.gif.hashes[0]), 'tampered');
+  fs.writeFileSync(path.join(folder, 'cache/webp-codecs', codec.specs.gif.hashes[0]), 'tampered');
   await assert.rejects(codec.runtime('gif', codec.generation), /무결성/);
   corrupt = false;
   await codec.runtime('gif', codec.generation);

@@ -47,7 +47,7 @@ test('split WASM is verified, cached offline, and rejects a corrupt replacement'
   const folder = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dccon-split-test-'));
   t.after(() => fs.rmSync(folder, {recursive: true, force: true}));
   const context = codecContext(), codec = context.module.exports;
-  context.BdApi.Plugins = {folder};
+  context.BdApi.Plugins = {folder, cacheFolder: path.join(folder, "cache")};
   let fetches = 0, corrupt = false;
   context.BdApi.Net = {fetch: async () => {
     fetches++;
@@ -60,7 +60,7 @@ test('split WASM is verified, cached offline, and rejects a corrupt replacement'
   await codec.runtime('split', codec.generation);
   assert.equal(fetches, 1);
   codec.stop(); corrupt = true;
-  fs.writeFileSync(path.join(folder, 'discord-dccon-cache/webp-codecs', codec.specs.split.hashes[1]), 'bad');
+  fs.writeFileSync(path.join(folder, 'cache/webp-codecs', codec.specs.split.hashes[1]), 'bad');
   await assert.rejects(codec.runtime('split', codec.generation), /무결성/);
 });
 

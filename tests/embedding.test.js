@@ -170,7 +170,7 @@ test('legacy cache keeps static vectors, rebuilds GIFs, and rejects damaged vect
 
 test('cached index does not rewrite unchanged vector file', async () => {
   const {Embedding: e}=runtime({dccons:[{info:{package_idx:1},detail:[{path:'a',ext:'png'}]}]},undefined,{require});
-  let writes=0;e.ready=true;e.vectors={'a:png':[1]};e.directory=()=>'/test';e.files=()=>({writeFile:async()=>{writes++;},rename:async()=>{}});
+  let writes=0;e.ready=true;e.vectors={'a:png':[1]};e.directory=()=>'/test';e.vectorDirectory=()=>'/test';e.files=()=>({mkdir:async()=>{},writeFile:async()=>{writes++;},rename:async()=>{}});
   await e.index();assert.equal(writes,0);assert.equal(e.status.phase,'준비 완료');
 });
 
@@ -180,8 +180,9 @@ for (const failure of ['write', 'rename']) {
       detail: [{path: 'a', ext: 'png'}]}]}, undefined, {require});
     let failing = true, calls = 0, writes = 0, temporary, saved;
     e.ready = true;
-    e.directory = () => '/test';
+    e.directory = () => '/test'; e.vectorDirectory = () => '/test';
     e.files = () => ({
+      mkdir: async () => {},
       writeFile: async (_, text) => {
         writes++;
         if (failing && failure === 'write') throw Error('disk unavailable');
@@ -200,7 +201,7 @@ for (const failure of ['write', 'rename']) {
     assert.equal(e.dirtyVectors, 1);
     failing = false;
     await e.index();
-    assert.deepEqual(saved.vectors['a:png'], [1]);
+    assert.deepEqual(saved.vector, [1]);
     assert.equal(e.status.phase, '준비 완료');
     assert.equal(e.dirtyVectors, 0);
     assert.equal(calls, 1);
@@ -215,8 +216,8 @@ test('old checkpoint completion cannot clear a restarted index dirty state', asy
     detail: [{path: 'a', ext: 'png'}]}]}, undefined, {require});
   let finish;
   e.ready = true;
-  e.directory = () => '/test';
-  e.files = () => ({writeFile: async () => {}, rename: () => new Promise(resolve => {finish = resolve;})});
+  e.directory = () => '/test'; e.vectorDirectory = () => '/test';
+  e.files = () => ({mkdir: async () => {}, writeFile: async () => {}, rename: () => new Promise(resolve => {finish = resolve;})});
   setImageLoader(async () => ({arrayBuffer: async () => new ArrayBuffer(1)}));
   e.call = async () => [1];
   const indexing = e.index();
@@ -249,10 +250,10 @@ test('index cancelled during file read cannot enqueue into a restarted worker', 
 
 test('index saves completed work before stopping after three errors', async () => {
   const {Embedding: e,setImageLoader}=runtime({dccons:[{info:{package_idx:1},detail:['a','b','c','d'].map(path=>({path,ext:'jpg'}))}]},undefined,{require});
-  let calls=0,saved,type;e.ready=true;e.directory=()=>'/test';e.files=()=>({writeFile:async(_,text)=>{saved=JSON.parse(text);},rename:async()=>{}});
+  let calls=0,saved,type;e.ready=true;e.directory=()=>'/test';e.vectorDirectory=()=>'/test';e.files=()=>({mkdir:async()=>{},writeFile:async(_,text)=>{saved=JSON.parse(text);},rename:async()=>{}});
   setImageLoader(async()=>({type:'image/webp',arrayBuffer:async()=>new ArrayBuffer(1)}));
   e.call=async(_,args)=>{type=args.type;if(calls++>0)throw Error('decode failed');return [1];};
-  await e.index();assert.equal(type,'image/webp');assert.equal(e.status.phase,'오류');assert.ok(saved.vectors['a:jpg']);assert.equal(e.indexing,false);
+  await e.index();assert.equal(type,'image/webp');assert.equal(e.status.phase,'오류');assert.ok(saved.vector);assert.equal(e.indexing,false);
 });
 
 test('an old index error cannot overwrite restarted status after checkpoint completes', async () => {
@@ -260,8 +261,8 @@ test('an old index error cannot overwrite restarted status after checkpoint comp
     detail: ['a', 'b', 'c', 'd'].map(path => ({path, ext: 'png'}))}]}, undefined, {require});
   let finish, calls = 0, renames = 0;
   e.ready = true;
-  e.directory = () => '/test';
-  e.files = () => ({writeFile: () => new Promise(resolve => {finish = resolve;}), rename: async () => {renames++;}});
+  e.directory = () => '/test'; e.vectorDirectory = () => '/test';
+  e.files = () => ({mkdir: async () => {}, writeFile: () => new Promise(resolve => {finish = resolve;}), rename: async () => {renames++;}});
   setImageLoader(async () => ({arrayBuffer: async () => new ArrayBuffer(1)}));
   e.call = async () => {if (calls++) throw Error('old failure'); return [1];};
   const indexing = e.index();
@@ -323,7 +324,7 @@ test('retry bursts coalesce and cannot start after embedding is disabled', async
 test('retries cannot restart active initialization and old cleanup cannot unlock a new startup', async () => {
   const {Embedding: e, timers, fire} = scheduledRuntime();
   const pending = [];
-  e.directory = () => '/test';
+  e.directory = () => '/test'; e.vectorDirectory = () => '/test';
   e.files = () => ({mkdir: () => new Promise(resolve => pending.push(resolve)), readFile: async () => {throw Error('missing');}});
   e.toggle(true); await fire();
   assert.equal(e.starting, true);
@@ -343,7 +344,7 @@ test('retries cannot restart active initialization and old cleanup cannot unlock
 test('failed startup releases its lock for a later retry; indexing ignores retries', async () => {
   const {Embedding: e, timers, fire} = scheduledRuntime();
   let attempts = 0;
-  e.directory = () => '/test';
+  e.directory = () => '/test'; e.vectorDirectory = () => '/test';
   e.files = () => ({mkdir: async () => {attempts++; throw Error('disk unavailable');}});
   e.toggle(true); await fire();
   assert.equal(e.status.phase, '오류');

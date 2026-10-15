@@ -32,7 +32,10 @@ for (const installation of ['BetterDiscord', 'shelter']) test(`${installation}: 
     DOM: {addStyle: (_, css) => {removeCss = injectCss(css);}, removeStyle: () => removeCss?.()}};
   const shelter = {React, ReactDOM, ReactDOMClient: {createRoot}, util: {getFiber: editor => fibers.get(editor)},
     flux: {storesFlat: {SelectedChannelStore: store}}, plugin: {store: {}, flushStore() {}}, ui: {injectCss}};
-  const adapter = installation === 'shelter' ? createAdapter(shelter, {initialData: data}, webpack) : null;
+  const adapter = installation === 'shelter' ? createAdapter(shelter, {config: async (method, args) => {
+    if (method === 'save') data[args[0]] = args[1];
+    return {version: 2, settings: structuredClone(data)};
+  }}, webpack) : null;
   const exported = {exports: {}};
   const source = fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
   vm.runInNewContext(source + '\nmodule.exports={Plugin:module.exports,getChannel:()=>currentChannelId};', {

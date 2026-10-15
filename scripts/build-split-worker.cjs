@@ -14,7 +14,12 @@ const block = '// BEGIN GENERATED SPLIT WORKER\nconst SPLIT_WORKER_SOURCE = ' +
 const file = path.join(root, 'discord-dccon.plugin.js');
 const original = fs.readFileSync(file, 'utf8');
 const pattern = /\/\/ BEGIN GENERATED SPLIT WORKER[\s\S]*?\/\/ END GENERATED SPLIT WORKER/;
-const updated = pattern.test(original) ? original.replace(pattern, () => block)
+let updated = pattern.test(original) ? original.replace(pattern, () => block)
   : original.replace('// Pinned libwebp WASM tools.', block + '\n\n// Pinned libwebp WASM tools.');
 if (updated === original && !pattern.test(original)) throw Error('Missing worker insertion marker');
+const migrationBlock = '// BEGIN GENERATED SHARED STORAGE\nconst SHARED_STORAGE_SOURCE = ' +
+  JSON.stringify(fs.readFileSync(path.join(root, 'scripts/shared-storage.cjs'), 'utf8')) + ';\n// END GENERATED SHARED STORAGE';
+const migrationPattern = /\/\/ BEGIN GENERATED SHARED STORAGE[\s\S]*?\/\/ END GENERATED SHARED STORAGE/;
+updated = migrationPattern.test(updated) ? updated.replace(migrationPattern, () => migrationBlock)
+  : updated.replace('// Pinned libwebp WASM tools.', migrationBlock + '\n\n// Pinned libwebp WASM tools.');
 if (updated !== original) fs.writeFileSync(file, updated);

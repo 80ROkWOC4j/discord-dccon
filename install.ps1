@@ -74,6 +74,7 @@ function Install-Standalone([string]$PackageDirectory) {
         }
     }
     $files = @('bootstrap.js', 'main.cjs', 'preload.cjs', 'native.js')
+    if (Test-Path -LiteralPath (Join-Path $build 'shared-storage.cjs')) {$files += 'shared-storage.cjs'}
     foreach ($file in $files) {if (!(Test-Path -LiteralPath (Join-Path $build $file))) {throw "Package is missing runtime/$file"}}
     if (!$record -and ((Test-Path -LiteralPath $app) -or (Test-Path -LiteralPath $original) -or !(Test-Path -LiteralPath $asar))) {
         throw 'This installer requires vanilla Discord. Existing mods are not replaced.'
