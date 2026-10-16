@@ -17,7 +17,7 @@ Discord 채팅 입력창에서 디시콘을 보내는 확장입니다. BetterDis
 
 ## 설치
 
-Discord 종료하고 아래 명령을 실행합니다. **BetterDiscord가 있으면 플러그인으로, 없으면 standalone으로 자동 설치**합니다. 업데이트도 같은 명령으로 하면 됩니다.
+Discord 종료하고 아래 명령을 실행합니다. **BetterDiscord 혹은 Shelter가 있으면 플러그인으로, 없으면(바닐라, Vencord) standalone으로 자동 설치**합니다. 업데이트도 같은 명령으로 하면 됩니다.
 
 **Windows — PowerShell**
 
@@ -37,12 +37,14 @@ Discord 업데이트 하면서 일부 파일이 바뀌면 작동하지 않을 �
 
 [Release](https://github.com/80ROkWOC4j/discord-dccon/releases)에서 **`discord-dccon.plugin.js`**를 다운로드합니다. Discord의 **설정 → BetterDiscord → 플러그인 → 플러그인 폴더 열기**로 연 폴더에 파일을 넣고 플러그인을 활성화합니다.
 
-### 웹 Discord에서 사용하기 (Violentmonkey · 시험 버전)
+### 웹 Discord에서 사용하기
 
-웹 Discord 입력창에 디시콘을 첨부할 수 있습니다. **데스크톱 Firefox + Violentmonkey**에서 동작합니다.
+**Firefox(데스크톱, 안드로이드) + Violentmonkey**에서 테스트 되었습니다.
 
 1. Firefox에 [Violentmonkey](https://violentmonkey.github.io/get-it/) 확장 기능을 설치합니다.
 2. **[디시콘 유저스크립트 설치](https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.0-beta.2/discord-dccon.user.js)**를 클릭하고, 열린 Violentmonkey 화면에서 **설치**를 누릅니다.
+
+안드로이드에서는 [Wappify](https://addons.mozilla.org/en-US/firefox/addon/wappify/)랑 쓰면 좀 더 편합니다.
 
 <details>
 <summary>PTB·Canary, 제거 및 기타 옵션</summary>
@@ -121,21 +123,17 @@ OPTIONS
 | Shift+클릭 | 디시콘 누적 하면서 선택창 유지 |
 | ☆ / ★ | 즐겨찾기 추가 / 해제 |
 
+### 콘 모으기
+
 Shift+클릭한 콘은 **모아둔 콘** 패널에 예상 메시지 배치로 표시됩니다. **전송**을 누르면 미리보기의 콘만 한 메시지로 보내고, 콘을 일반 클릭하면 그 콘을 하나 더 추가해 전송합니다. 미리보기의 콘을 누르면 개별 삭제할 수 있습니다. 미리보기는 pc 환경 기준으로 맞춰졌습니다.
 
 <img src="images/multi-preview.png" alt="미리보기" width="780">
 
 콘을 **1개만 모으면** 미리보기 아래의 **9개로 쪼개서 보내기** 버튼이 활성화됩니다. 이미지를 3×3으로 나눠 한 메시지로 보냅니다.
 
-애니메이션 콘을 **2~3개 모으면**, 한 번 재생되는 총길이와 반복 횟수가 모두 같은 경우 **합쳐서 전송** 버튼이 활성화됩니다. 선택한 순서대로 원본 크기를 유지해 가로로 이어붙이고, 높이가 다른 이미지는 세로 중앙에 배치하며 빈 공간은 투명하게 채웁니다. 프레임 개수는 달라도 되며 각 콘의 프레임 표시 시간을 유지합니다. 정적 이미지 또는 재생 길이·반복 횟수가 다른 애니메이션은 합칠 수 없으며, 버튼 아래에 이유가 표시됩니다.
-
-분할과 합치기는 무손실 WebP로 처리합니다. 최초 사용 시 인코더를 다운로드해 캐시하며, 빠른 압축 설정을 사용하므로 출력 용량이 늘어날 수 있습니다.
-
-합친 WebP는 공통 캐시 폴더의 `merged` 아래에 저장합니다. 같은 콘을 같은 순서로 다시 합치면 재시작 후에도 캐시를 재사용하며, 순서나 중복 개수가 다른 조합은 별도로 저장합니다.
+콘을 **2~3개 모으면**, 같은 길이면 **합쳐서 전송** 버튼이 활성화됩니다. 이러면 이미지 하나로 보냅니다.
 
 ### 공통 설정·데이터 경로
-
-BetterDiscord·스탠드얼론과 Stable·Canary는 같은 OS 사용자 계정에서 설정·등록 목록·즐겨찾기·개인 이미지·캐시를 모두 공유합니다. 코드가 OS의 앱 데이터 폴더를 기준으로 경로를 계산합니다.
 
 <details>
 <summary>로컬에 저장되는 것들 상세 설명</summary>
@@ -173,8 +171,6 @@ cache/
 <img src="images/namanani.png" alt="나만아니면돼" width="520">
 
 ## 진단
-
-설정 상단의 **버전 정보 → 업데이트 확인**에서 현재 버전과 새 릴리스 유무를 확인할 수 있습니다. 정식 버전은 정식 릴리스만, 베타 버전은 베타 릴리스도 포함해 비교합니다. 버튼을 눌렀을 때만 조회하며 자동으로 다운로드하거나 설치하지 않습니다.
 
 문제가 있으면 **설정 → 문제 해결 · 버그 제보**에서 마지막 전송 결과를 확인할 수 있습니다.
 
