@@ -55,6 +55,31 @@ test('clipboard import previews before saving, persists bytes offline, rejects d
   await assert.rejects(h.getDCConImage(con), {code: 'ENOENT'});
 });
 
+test('personal order persists, refreshes the picker and leaves references unchanged', async t => {
+  const h = harness(t);
+  const items = ['첫째', '둘째', '셋째'].map((title, index) => ({idx: String(index), path: 'personal:' + index, title, packageIdx: 'personal-cons'}));
+  h.data.personalCons = items;
+  h.data.favorites = [items[0]];
+  h.data.recent = [items[1]];
+  const manager = new h.PersonalConManager({});
+  manager.componentDidMount();
+  t.after(() => manager.componentWillUnmount());
+  await h.movePersonalCon(items[2], -1);
+  await h.movePersonalCon(items[0], 1);
+  const titles = list => Array.from(list, con => con.title);
+  assert.deepEqual(titles(h.personalCons()), ['셋째', '첫째', '둘째']);
+  assert.deepEqual(titles(manager.state.items), ['셋째', '첫째', '둘째']);
+  assert.deepEqual(titles(h.pickerPacks()[0].detail), ['셋째', '첫째', '둘째']);
+  const saved = h.data.personalCons;
+  await h.movePersonalCon(items[2], -1);
+  await h.movePersonalCon(items[1], 1);
+  await h.movePersonalCon({path: 'missing'}, 1);
+  assert.equal(h.data.personalCons, saved);
+  assert.deepEqual(h.data.favorites, [items[0]]);
+  assert.deepEqual(h.data.recent, [items[1]]);
+  assert.equal(h.calls.length, 0);
+});
+
 test('clipboard denial falls back to input; manual submission saves directly and repeated clicks coalesce', async t => {
   const h = harness(t, {clipboard: async () => {throw Error('denied');}});
   const manager = new h.PersonalConManager({});

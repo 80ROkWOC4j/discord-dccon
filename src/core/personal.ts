@@ -111,6 +111,14 @@ export function createPersonal(platform: Platform, settings: SettingsService, pa
     await saveData("personalCons", [...items, {...con, title: title.trim() || `개별 콘 ${items.length + 1}`}]);
     PluginEvents.dispatch({type: "DCCON_PERSONAL_UPDATE"});
   }
+  async function movePersonalCon(con: Con, direction: number) {
+    const items = personalCons(), from = items.findIndex(item => item.path === con.path);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= items.length) return;
+    [items[from], items[to]] = [items[to], items[from]];
+    await saveData("personalCons", items);
+    PluginEvents.dispatch({type: "DCCON_PERSONAL_UPDATE"});
+  }
   async function removePersonalCon(con: Con) {
     if (sending.isSendingCon(con))
       throw Error("전송 중인 콘은 잠시 후 제거해 주세요.");
@@ -123,6 +131,6 @@ export function createPersonal(platform: Platform, settings: SettingsService, pa
     PluginEvents.dispatch({type: "DCCON_RECENT_UPDATE"});
   }
 
-  return {personalURL, personalVideo, preparePersonalCon, storePersonalCon, removePersonalCon};
+  return {personalURL, personalVideo, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon};
 }
 export type Personal = ReturnType<typeof createPersonal>;

@@ -20,7 +20,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   media: MediaUI;
 }) {
   const {personalCons, getDCConSearchResult, loadPacks} = packs;
-  const {personalURL, preparePersonalCon, storePersonalCon, removePersonalCon} = personal;
+  const {personalURL, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon} = personal;
   const {inspectInstantSend} = sending;
   const {DCConImage, PersonalImage, BufferImage, PackThumbnail, Button} = media;
   const getLocaleStrings = () => stringsFor(platform.discord.locale);
@@ -79,8 +79,9 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     }
     render() {
       const h = platform.react.createElement, s = this.state;
+      const addButton = () => h("button", {type: "button", className: "dccon-button", "aria-label": "콘 추가", disabled: s.busy || s.open, onClick: () => this.open()}, "+ 콘 추가");
       return h("div", {className: "dccon-personal"},
-        h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.open()}, "콘 추가"),
+        h("div", {className: "dccon-list-toolbar"}, h("span", null, `${s.items.length}개 콘`), addButton()),
         s.open && h("form", {className: "dccon-personal-form", onSubmit: event => {event.preventDefault(); this.add();}},
           h("label", null, "이미지 링크", h("input", {value: s.input, disabled: s.busy, placeholder: "디시콘 · 아카콘 이미지 URL", onChange: e => this.setState({input: (e.target as HTMLInputElement).value, prepared: null})})),
           h("label", null, "이름 (선택)", h("input", {value: s.title, disabled: s.busy, maxLength: 100, onChange: e => this.setState({title: (e.target as HTMLInputElement).value})})),
@@ -89,11 +90,15 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
             h("button", {type: "submit", className: "dccon-button", disabled: s.busy || !s.input.trim()}, s.busy ? "처리 중…" : "추가"),
             h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.setState({open: false, prepared: null, message: ""})}, "취소"))),
         h("p", {role: "status"}, s.busy ? "이미지를 처리하고 있습니다…" : s.message),
-        !s.items.length && h("p", null, "개별 이미지를 등록하면 내 디시콘의 ‘개별 콘’에서 사용할 수 있습니다."),
-        ...s.items.map(con => h("div", {className: "dccon-card", key: con.path},
-          h("div", {className: "dccon-personal-preview"}, h(PersonalImage, {con})),
-          h("div", {className: "dccon-card-content"}, h("h3", null, con.title)),
-          h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.work(() => removePersonalCon(con))}, "제거"))));
+        !s.items.length && !s.open && h("div", {className: "dccon-empty-state"},
+          "등록된 개별 콘이 없습니다. 이미지 링크로 콘을 추가해 보세요."),
+        h("div", {className: "dccon-saved-container"}, s.items.map((con, index) => h(SavedConCard, {
+          key: con.path, title: con.title || "개별 콘",
+          thumbnail: h(PersonalImage, {con}),
+          isFirst: index === 0, isLast: index === s.items.length - 1, disabled: s.busy,
+          onMove: direction => this.work(() => movePersonalCon(con, direction)),
+          onRemove: () => this.work(() => removePersonalCon(con)),
+        }))));
     }
   }
   class DCConCard extends platform.react.Component<CardProps, {isAdding: boolean}> {
@@ -120,16 +125,16 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
         {
           className: "dccon-card",
         },
-        platform.react.createElement(DCConImage, {
+        platform.react.createElement("div", {className: "dccon-card-thumbnail"}, platform.react.createElement(DCConImage, {
           src: `${DCConProxyURL}${item.thumbId}`,
           style: { borderRadius: "8px" },
-        }),
+        })),
         platform.react.createElement(
           "div",
           { className: "dccon-card-content" },
-          platform.react.createElement("h3", {}, item.name),
-          platform.react.createElement("span", {}, item.seller),
-          platform.react.createElement(Button, {
+          platform.react.createElement("h3", {title: item.name}, item.name),
+          platform.react.createElement("span", {title: item.seller}, item.seller),
+          platform.react.createElement("div", {className: "dccon-pack-actions"}, platform.react.createElement(Button, {
             text: existingDccon
               ? strings.settings.added
               : this.state.isAdding
@@ -158,60 +163,27 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
               }
             },
             style: {
-              marginTop: "auto",
-              marginLeft: "auto",
-            },
-          })
-        )
-      );
-    }
-  }
-
-  // 저장된 디시콘 카드 컴포넌트 (추가된 디시콘 관리용)
-  class SavedDCConCard extends platform.react.Component<SavedCardProps, Record<string, never>> {
-
-    render() {
-      const { dccon } = this.props;
-      const strings = getLocaleStrings();
-
-      return platform.react.createElement(
-        "div",
-        {
-          className: "dccon-card",
-        },
-        platform.react.createElement(PackThumbnail, {
-          pack: dccon,
-          style: { borderRadius: "8px" },
-        }),
-        platform.react.createElement(
-          "div",
-          { className: "dccon-card-content" },
-          platform.react.createElement("h3", {}, dccon.info.title),
-          platform.react.createElement(
-            "span",
-            {},
-            `${dccon.detail.length}개의 디시콘`
-          ),
-          platform.react.createElement("div", {className: "dccon-pack-actions"},
-          platform.react.createElement("div", {className: "dccon-pack-order", role: "group", "aria-label": dccon.info.title + " 순서 조절"},
-            ...([[-1, "위로", this.props.isFirst], [1, "아래로", this.props.isLast]] as const).map(([direction, label, disabled]) =>
-              platform.react.createElement("button", {key: direction, type: "button", disabled,
-                "aria-label": dccon.info.title + " " + label, onClick: () => this.props.onMove(direction)}, label))),
-          platform.react.createElement(Button, {
-            text: strings.settings.remove,
-            color: "dccon-item-error",
-            onClick: () => {
-              packs.removePack(dccon.info.package_idx);
-              this.props.onRemove(dccon.info.package_idx);
-              platform.ui.showToast("디시콘이 제거되었습니다.", { type: "success" });
-            },
-            style: {
               marginLeft: "auto",
             },
           }))
         )
       );
     }
+  }
+
+  function SavedConCard(props: SavedCardProps) {
+    const h = platform.react.createElement;
+    return h("div", {className: "dccon-card"}, h("div", {className: "dccon-card-thumbnail"}, props.thumbnail),
+      h("div", {className: "dccon-card-content"},
+        h("h3", {title: props.title}, props.title),
+        h("span", {"aria-hidden": !props.description || undefined}, props.description),
+        h("div", {className: "dccon-pack-actions"},
+          h("div", {className: "dccon-pack-order", role: "group", "aria-label": props.title + " 순서 조절"},
+            ...([[-1, "위로", props.isFirst], [1, "아래로", props.isLast]] as const).map(([direction, label, boundary]) =>
+              h("button", {key: direction, type: "button", disabled: props.disabled || boundary,
+                "aria-label": props.title + " " + label, onClick: () => props.onMove(direction)}, label))),
+          h(Button, {text: getLocaleStrings().settings.remove, color: "dccon-item-error", disabled: props.disabled,
+            onClick: props.onRemove, style: {marginLeft: "auto"}}))));
   }
   class EmbeddingEnvironmentPanel extends platform.react.Component<Record<string, never>, {revision?: number}> {
     declare refresh: () => void;
@@ -272,6 +244,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   }
 
   // 설정 패널 컴포넌트
+  let lastManagementTab = "shop";
   class DCConSettingsPanel extends platform.react.Component<{section?: string}, SettingsState> {
     declare reportInput: HTMLTextAreaElement | null;
 
@@ -279,7 +252,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
       super(props);
 
       this.state = {
-        activeTab: "saved",
+        activeTab: lastManagementTab,
         searchQuery: "",
         searchResults: [],
         isSearching: false,
@@ -307,6 +280,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     }
 
     handleTabChange(tab: string) {
+      lastManagementTab = tab;
       this.setState({ activeTab: tab });
     }
 
@@ -318,7 +292,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
         { className: "dccon-search-container" },
         platform.react.createElement(
           "div",
-          { className: "dccon-search-bar" },
+          { className: "dccon-list-toolbar dccon-search-bar" },
           platform.react.createElement("input", {
             type: "text",
             placeholder: strings.settings.searchDccon,
@@ -333,7 +307,6 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
             disabled:
               this.state.isSearching || this.state.searchQuery.trim() === "",
             onClick: this.handleSearch,
-            style: { marginLeft: "8px" },
           })
         ),
         platform.react.createElement(
@@ -396,14 +369,20 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     }
 
     renderSaved() {
-      return platform.react.createElement(
+      const h = platform.react.createElement;
+      const addButton = () => h("button", {type: "button", className: "dccon-button", onClick: () => this.handleTabChange("shop")}, "+ 팩 추가");
+      return h("div", null,
+        h("div", {className: "dccon-list-toolbar"}, h("span", null, `${this.state.savedDccons.length}개 팩`), addButton()),
+      platform.react.createElement(
         "div",
         { className: "dccon-saved-container" },
         this.state.savedDccons.length > 0
           ? this.state.savedDccons.map((dccon, index) =>
-              platform.react.createElement(SavedDCConCard, {
+              platform.react.createElement(SavedConCard, {
                 key: dccon.info.package_idx,
-                dccon: dccon,
+                title: dccon.info.title,
+                thumbnail: platform.react.createElement(PackThumbnail, {pack: dccon, style: {borderRadius: "8px"}}),
+                description: `${dccon.detail.length}개의 디시콘`,
                 isFirst: index === 0,
                 isLast: index === this.state.savedDccons.length - 1,
                 onMove: direction => {
@@ -411,16 +390,18 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
                   if (reordered) this.setState({savedDccons: reordered});
                 },
                 onRemove: () => {
+                  packs.removePack(dccon.info.package_idx);
                   this.setState({ savedDccons: loadPacks() });
+                  platform.ui.showToast("디시콘이 제거되었습니다.", {type: "success"});
                 },
               })
             )
           : platform.react.createElement(
               "div",
               { className: "dccon-empty-state" },
-              "추가된 디시콘이 없습니다. '디시콘샵' 탭에서 디시콘을 추가해보세요."
+              "추가된 디시콘이 없습니다. 디시콘샵에서 팩을 추가해 보세요."
             )
-      );
+      ));
     }
 
     render() {
@@ -431,7 +412,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
       }
       return h("div", {className: "dccon-settings-panel"},
         h("div", {className: "dccon-tab-menu"},
-          ...[["saved", "내 디시콘"], ["shop", "디시콘샵"], ["personal", "개별 콘"]].map(([tab, label]) => h("button", {
+          ...[["shop", "디시콘샵"], ["saved", "보관한 팩"], ["personal", "개별 콘"]].map(([tab, label]) => h("button", {
             key: tab, type: "button", className: "dccon-tab-item " + (this.state.activeTab === tab ? "active" : ""),
             onClick: () => this.handleTabChange(tab),
           }, label))),
@@ -441,6 +422,6 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   }
   // #endregion
 
-  return {PersonalConManager, DCConCard, SavedDCConCard, EmbeddingEnvironmentPanel, DCConSettingsPanel};
+  return {PersonalConManager, DCConCard, SavedConCard, EmbeddingEnvironmentPanel, DCConSettingsPanel};
 }
 export type SettingsUI = ReturnType<typeof createSettingsUI>;

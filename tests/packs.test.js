@@ -58,10 +58,32 @@ async function searchResult(ref) {
   ]}));
 }
 
+test('management starts in the shop and remembers the selected tab only for the current UI session', async () => {
+  await scenario('discord-dccon.plugin.js', [], async ({root, DCConSettingsPanel, click, data, errors}) => {
+    assert.deepEqual([...document.querySelectorAll('.dccon-tab-item')].map(item => item.textContent), ['디시콘샵', '보관한 팩', '개별 콘']);
+    assert.equal(document.querySelector('.dccon-tab-item.active').textContent, '디시콘샵');
+    const before = JSON.stringify(data);
+    for (const label of ['보관한 팩', '개별 콘', '디시콘샵']) {
+      await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === label));
+      await React.act(async () => root.render(null));
+      await React.act(async () => root.render(React.createElement(DCConSettingsPanel, {section: 'settings'})));
+      await React.act(async () => root.render(null));
+      await React.act(async () => root.render(React.createElement(DCConSettingsPanel)));
+      assert.equal(document.querySelector('.dccon-tab-item.active').textContent, label);
+    }
+    await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '개별 콘'));
+    assert.equal(JSON.stringify(data), before);
+    assert.deepEqual(errors, []);
+  });
+  await scenario('discord-dccon.plugin.js', [], async () => {
+    assert.equal(document.querySelector('.dccon-tab-item.active').textContent, '디시콘샵');
+  });
+});
+
 test('individual con management opens a URL form when clipboard is unavailable', async () => {
   await scenario('discord-dccon.plugin.js', [], async ({click, errors}) => {
     await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '개별 콘'));
-    await click(document.querySelector('.dccon-personal > button'));
+    await click(document.querySelector('[aria-label="콘 추가"]'));
     assert.equal(document.querySelectorAll('.dccon-personal-form input').length, 2);
     assert.match(document.querySelector('[role="status"]').textContent, /링크를 직접 입력/);
     assert.equal(document.querySelector('button[type="submit"]').disabled, true);
@@ -83,7 +105,7 @@ test('one add and a rapid repeated remove keep storage and UI synchronized witho
     assert.equal(requests(), 1);
     assert.equal(data.dccons.length, 1);
     assert.equal(document.querySelector('.dccon-card button').disabled, true);
-    await click(document.querySelector('.dccon-tab-item'));
+    await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '보관한 팩'));
     assert.equal(document.querySelectorAll('.dccon-card').length, 1);
     const remove = document.querySelector('.dccon-card .dccon-item-error');
     await React.act(async () => {
@@ -95,7 +117,7 @@ test('one add and a rapid repeated remove keep storage and UI synchronized witho
     assert.ok(document.querySelector('.dccon-empty-state'));
     await searchResult(ref);
     await click(document.querySelector('.dccon-card button'));
-    await click(document.querySelector('.dccon-tab-item'));
+    await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '보관한 팩'));
     assert.equal(document.querySelectorAll('.dccon-card').length, 1);
     assert.deepEqual(errors, []);
   });
@@ -103,6 +125,7 @@ test('one add and a rapid repeated remove keep storage and UI synchronized witho
 
 test('existing numeric/string duplicate IDs render once and removal preserves other packs', async () => {
   await scenario('discord-dccon.plugin.js', [pack(42), pack('42'), pack(99, '다른 팩')], async ({data, click, errors}) => {
+    await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '보관한 팩'));
     assert.equal(document.querySelectorAll('.dccon-card').length, 2);
     await click(document.querySelector('.dccon-card .dccon-item-error'));
     assert.equal(data.dccons.length, 1);
@@ -117,6 +140,7 @@ test('pack order controls persist order across remount and picker navigation', a
   const initial = [pack(1, '첫째'), pack(2, '둘째'), pack(3, '셋째')];
   for (const item of initial) item.detail = [{idx: String(item.info.package_idx), title: '콘', path: 'image', ext: 'png'}];
   await scenario('discord-dccon.plugin.js', initial, async ({data, root, DCConSettingsPanel, DCConPanel, click, errors}) => {
+    await click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '보관한 팩'));
     const titles = () => [...document.querySelectorAll('.dccon-card h3')].map(node => node.textContent);
     assert.equal(document.querySelector('[aria-label="첫째 위로"]').disabled, true);
     assert.equal(document.querySelector('[aria-label="셋째 아래로"]').disabled, true);
@@ -130,6 +154,31 @@ test('pack order controls persist order across remount and picker navigation', a
     assert.deepEqual(titles(), ['셋째', '첫째', '둘째']);
     await React.act(async () => root.render(React.createElement(DCConPanel, {type: 'dccon'})));
     assert.deepEqual([...document.querySelectorAll('.dccon-rail-button')].slice(3, 6).map(node => node.title), ['셋째', '첫째', '둘째']);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test('individual cons use saved-card controls and retain their order after remount', async () => {
+  await scenario('discord-dccon.plugin.js', [pack(42)], async ({data, root, DCConSettingsPanel, click, errors, setImageLoader}) => {
+    data.personalCons = ['첫째', '둘째', '셋째'].map((title, index) => ({idx: String(index), path: 'personal:' + index, title, packageIdx: 'personal-cons'}));
+    setImageLoader(async () => new File(['image'], 'con.webp', {type: 'image/webp'}));
+    const openPersonal = () => click([...document.querySelectorAll('.dccon-tab-item')].find(item => item.textContent === '개별 콘'));
+    const titles = () => [...document.querySelectorAll('.dccon-card h3')].map(node => node.textContent);
+    await openPersonal();
+    assert.equal(document.querySelector('[aria-label="첫째 위로"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="셋째 아래로"]').disabled, true);
+    assert.equal(document.querySelectorAll('.dccon-saved-container .dccon-pack-actions .dccon-item-error').length, 3);
+    await click(document.querySelector('[aria-label="셋째 위로"]'));
+    await click(document.querySelector('[aria-label="첫째 아래로"]'));
+    assert.deepEqual(titles(), ['셋째', '첫째', '둘째']);
+    assert.deepEqual(Array.from(data.personalCons, con => con.title), titles());
+    assert.deepEqual(data.dccons, [pack(42)]);
+    await React.act(async () => root.render(null));
+    await React.act(async () => root.render(React.createElement(DCConSettingsPanel)));
+    await openPersonal();
+    assert.deepEqual(titles(), ['셋째', '첫째', '둘째']);
+    assert.equal(document.querySelector('[aria-label="셋째 위로"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="둘째 아래로"]').disabled, true);
     assert.deepEqual(errors, []);
   });
 });
