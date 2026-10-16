@@ -57,7 +57,7 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       const entries = activeQueue(channelId);
       const busy = sending.isSending(channelId);
       if (!entries.length && !busy) return null;
-      return h("section", { className: "dccon-buffer", "aria-label": "전송 대기 디시콘" },
+      return h("section", { className: "dccon-buffer", "aria-label": "전송 대기 디시콘", "data-count": entries.length },
         h("div", { className: "dccon-buffer-heading" },
           h("span", {role: "status"}, busy ? (platform.composer?.attachFiles ? "첨부 중…" : "전송 중…") : "모아둔 콘 " + entries.length + "/9"),
           h("div", {className: "dccon-buffer-actions"},
@@ -392,9 +392,11 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
                     !this.state.dccons.length && h("button", { type: "button", onClick: this.props.onManage }, "팩 추가하기"))
           )
         ),
-        h("div", { className: "dccon-footer" }, platform.composer?.attachFiles
+        h("div", { className: "dccon-footer" }, h("span", {className: "dccon-desktop-hint"}, platform.composer?.attachFiles
           ? "탭/클릭: 입력창에 첨부 · 길게 누르기/Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
-          : "탭/클릭: 누적 콘과 함께 전송 · 길게 누르기/Shift+클릭: 모아두기 (최대 9개)")
+          : "탭/클릭: 누적 콘과 함께 전송 · 길게 누르기/Shift+클릭: 모아두기 (최대 9개)"),
+          h("span", {className: "dccon-compact-hint"}, platform.composer?.attachFiles
+            ? "길게 눌러 모으기 · 탭하여 입력창에 첨부" : "길게 눌러 모으기 · 탭하여 전송"))
       );
     }
   }

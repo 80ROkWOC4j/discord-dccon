@@ -8,7 +8,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 
-test('mobile Discord textarea mounts the toolbar and receives files without changing the draft',async()=>{
+test('mobile Discord textarea receives files without changing the draft or taking focus',async()=>{
  const {window}=new JSDOM('<form><div class="channelTextArea_mobile"><textarea>mobile draft</textarea><input type="file" multiple><div class="buttons_mobile"></div></div></form>',{url:'https://discord.com/channels/1/2'});
  const document=window.document,editor=document.querySelector('textarea'),input=document.querySelector('input');
  editor.getClientRects=()=>[{}];Object.defineProperty(input,'files',{value:[],writable:true});
@@ -25,8 +25,10 @@ test('mobile Discord textarea mounts the toolbar and receives files without chan
    const item=document.createElement('li');item.setAttribute('data-list-item-id','attachments___mobile');
    const name=document.createElement('span');name.className='filename_mobile';name.textContent=input.files[0].name;item.append(name);input.closest('form').append(item);
   });
+  const pickerButton=document.createElement('button');document.body.append(pickerButton);pickerButton.focus();
   await bridge.attachFiles([new window.File(['test'],'mobile.gif')],rendered[0].channelId);
   assert.equal(editor.value,'mobile draft');assert.equal(input.files[0].name,'mobile.gif');
+  assert.equal(document.activeElement,pickerButton);
  }finally{stop();bridge.dispose();window.close();}
 });
 
@@ -59,7 +61,7 @@ function fixture() {
  for(const input of window.document.querySelectorAll('input'))Object.defineProperty(input,'files',{value:[],writable:true});
  return {window,page,bridge,editors,files,add};
 }
-test('the button-bound composer receives all files, preserves text and never submits',async()=>{
+test('the button-bound composer receives all files, preserves text and focus, and never submits',async()=>{
  const {window,bridge,editors,files,add}=fixture();let submits=0,mainChanges=0;
  window.document.addEventListener('submit',()=>submits++);
  const main=editors[0].closest('form'),thread=editors[1].closest('form');
@@ -67,7 +69,10 @@ test('the button-bound composer receives all files, preserves text and never sub
  thread.querySelector('input').addEventListener('change',e=>{for(const file of e.target.files)add(thread,file.name);});
  const mainId=bridge.targetFor(editors[0]),threadId=bridge.targetFor(editors[1]);assert.notEqual(mainId,threadId);
  assert.equal(bridge.targetFor(editors[1]),threadId);
+ for(const editor of editors)editor.tabIndex=0;
+ editors[0].focus();
  await bridge.attachFiles(files,threadId);
+ assert.equal(window.document.activeElement,editors[0]);
  assert.equal(mainChanges,0);assert.equal(submits,0);assert.equal(thread.querySelectorAll('li').length,2);
  assert.equal(editors[0].textContent,'main draft');assert.equal(editors[1].textContent,'thread draft');
  thread.remove();assert.throws(()=>bridge.attachFiles(files,threadId),/입력창이 바뀌/);

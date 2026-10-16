@@ -133,8 +133,9 @@ export function createToolbarUI(platform: Platform, sending: Pick<Sending, "acti
       const viewportWidth = viewport?.width ?? window.innerWidth;
       const viewportHeight = viewport?.height ?? window.innerHeight;
       const x = viewport?.offsetLeft ?? 0, y = viewport?.offsetTop ?? 0;
-      const width = Math.min(expanded ? 780 : 520, viewportWidth - 16);
-      const height = Math.min(540, viewportHeight - 16);
+      const compact = viewportWidth < 600;
+      const width = compact ? viewportWidth - 16 : Math.min(expanded ? 780 : 520, viewportWidth - 16);
+      const height = Math.min(compact ? 620 : 540, viewportHeight - 16);
       const rect = this.button?.getBoundingClientRect();
       const left = Math.max(x + 8, Math.min((rect?.right ?? x + width) - width, x + viewportWidth - width - 8));
       const top = Math.max(y + 8, Math.min((rect?.top ?? y + height) - height - 8, y + viewportHeight - height - 8));
@@ -152,13 +153,13 @@ export function createToolbarUI(platform: Platform, sending: Pick<Sending, "acti
         this.state.active && platform.reactDOM.createPortal(
           h("div", { className: "dccon-overlay", onMouseDown: this.close },
             h("section", {
-              className: "dccon-popover" + (expanded ? " dccon-popover-expanded" : ""),
+              className: "dccon-popover" + (expanded ? " dccon-popover-expanded" : "") +
+                (compact ? " dccon-popover-compact" : "") + (compact && viewportHeight < 480 ? " dccon-popover-short" : ""),
               role: "dialog",
               "aria-label": "디시콘 선택",
-              style: { left, top, height, width },
+              style: { left, top, height, width, "--dccon-tray-max-height": Math.floor(height * 0.4) + "px" } as React.CSSProperties,
               onMouseDown: (event) => event.stopPropagation(),
             },
-              expanded && h(BufferTray, {channelId: this.props.channelId}),
               h("div", {className: "dccon-popover-main", key: "main"},
               h("div", { className: "dccon-popover-toolbar" },
                 ...[["picker", "내 디시콘"], ["packs", "팩 추가 / 관리"], ["settings", "설정"]].map(([page, label]) =>
@@ -168,7 +169,8 @@ export function createToolbarUI(platform: Platform, sending: Pick<Sending, "acti
               ),
               h("div", { className: "dccon-popover-body" },
                 this.state.page !== "picker" ? h(DCConSettingsPanel, { key: this.state.page, section: this.state.page }) : h(DCConPanel, { type: "dccon", onManage: () => this.setState({ page: "packs" }) })
-              ))
+              )),
+              expanded && h(BufferTray, {key: "buffer", channelId: this.props.channelId})
             )
           ), document.body
         )

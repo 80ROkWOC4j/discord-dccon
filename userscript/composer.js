@@ -24,7 +24,7 @@ function createComposerBridge(page, document) {
     return target;
   }
   function attachFiles(files, id) {
-    const target = current(id), {form,input,editor} = target;
+    const {form,input} = current(id);
     const before = new Set([...form.querySelectorAll(attachmentSelector)].map(n=>n.getAttribute('data-list-item-id')));
     if (before.size + files.length > 10) throw Error('기존 첨부를 포함해 최대 10개까지 첨부할 수 있습니다. 모아둔 콘은 유지됩니다.');
     const transfer = new page.DataTransfer();
@@ -49,7 +49,7 @@ function createComposerBridge(page, document) {
       const observer = new page.MutationObserver(check);
       observer.observe(form,{childList:true,subtree:true,characterData:true});
       timer = page.setTimeout(()=>finish(Error('Discord의 첨부 수락을 확인하지 못했습니다. 모아둔 콘을 유지했습니다. 입력창을 확인해 주세요.')),5000);
-      try {input.files=transfer.files;input.dispatchEvent(new page.Event('change',{bubbles:true}));editor.focus();check();}
+      try {input.files=transfer.files;input.dispatchEvent(new page.Event('change',{bubbles:true}));check();}
       catch (error) {finish(error);}
     });
   }
