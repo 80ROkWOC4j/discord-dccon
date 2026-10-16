@@ -14,12 +14,153 @@
 // Distributed under GNU GPL version 3; see LICENSE. Original attribution retained.
 // Reference: https://github.com/Dastan21/BDAddons/blob/main/plugins/FavoriteMedia/FavoriteMedia.plugin.js
 
-/* global BdApi */
+/* global BdApi, DCConPlatform */
+
+// BEGIN GENERATED PLATFORM
+var DCConPlatformAdapters = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // platform/betterdiscord.ts
+  var betterdiscord_exports = {};
+  __export(betterdiscord_exports, {
+    appDataDirectory: () => appDataDirectory,
+    createBetterDiscordPlatform: () => createBetterDiscordPlatform
+  });
+
+  // platform/discord.ts
+  function createDiscordServices(modules, fiber) {
+    const uploadModule = () => modules.getModule((value) => typeof value === "function" && typeof value.prototype?.trackUploadFinished === "function" && typeof value.prototype?.upload === "function", { searchExports: true });
+    const restModule = () => modules.getModule((value) => value !== null && typeof value === "object" && ["get", "post", "put", "del"].every((key) => typeof value[key] === "function"), { searchExports: true });
+    return {
+      locale: modules.getByKeys("locale", "initialize"),
+      classes: {
+        icon: modules.getByKeys("icon", "active", "buttonWrapper") ?? {},
+        textarea: modules.getByKeys("channelTextArea", "buttonContainer", "button") ?? {}
+      },
+      selectedChannelStore: () => modules.getStore?.("SelectedChannelStore"),
+      channelFor(editor) {
+        for (let current = fiber(editor); current; current = current.return) {
+          const channel = current.memoizedProps?.channel;
+          if (channel?.id) return channel.id;
+        }
+        return modules.getStore?.("SelectedChannelStore")?.getChannelId?.();
+      },
+      uploadModule,
+      restModule,
+      inspect() {
+        const report = {};
+        const check = (name, inspect) => {
+          try {
+            report[name] = Boolean(inspect());
+          } catch (error) {
+            report[name] = `Lookup failed: ${error.message}`;
+          }
+        };
+        check("CloudUpload", uploadModule);
+        check("REST post/get/put/del", restModule);
+        check("MessageActions.sendMessage", () => modules.getByKeys("sendMessage"));
+        for (const name of ["DraftStore", "UploadAttachmentStore", "PendingReplyStore", "SelectedChannelStore"]) {
+          check(name, () => modules.getStore?.(name));
+        }
+        return report;
+      }
+    };
+  }
+
+  // platform/betterdiscord.ts
+  function appDataDirectory(platform, env, home, join) {
+    if (platform === "win32") return env.APPDATA || join(home, "AppData", "Roaming");
+    if (platform === "darwin") return join(home, "Library", "Application Support");
+    return join(home, ".config");
+  }
+  function createBetterDiscordPlatform(api, nativeRequire, storageSource) {
+    const paths = {
+      join: (...parts) => nativeRequire("path").join(...parts),
+      dirname: (file2) => nativeRequire("path").dirname(file2),
+      cache(...parts) {
+        if (api.Plugins.cacheFolder) return paths.join(api.Plugins.cacheFolder, ...parts);
+        const runtime = globalThis.process || nativeRequire("process");
+        return paths.join(appDataDirectory(runtime.platform, runtime.env, nativeRequire("os").homedir(), paths.join), "discord-dccon", "cache", ...parts);
+      },
+      legacyCache: (...parts) => paths.join(api.Plugins.folder, "discord-dccon-cache", ...parts),
+      dataRoot: () => api.Plugins.dataFolder || paths.dirname(paths.cache())
+    };
+    const file = (method, ...args) => new Promise((resolve, reject) => {
+      nativeRequire("fs")[method](...args, (error, value) => {
+        if (!error) return resolve(value);
+        if (!error.code) error.code = /(?:^|Error: )(E[A-Z0-9]+):/.exec(error.message)?.[1];
+        reject(error);
+      });
+    });
+    return {
+      react: api.React,
+      reactDOM: api.ReactDOM,
+      discord: createDiscordServices(api.Webpack, (editor) => api.ReactUtils.getInternalInstance(editor)),
+      get net() {
+        return api.Net;
+      },
+      paths,
+      file,
+      sha256: (bytes) => nativeRequire("crypto").createHash("sha256").update(bytes).digest("hex"),
+      readClipboardText: () => nativeRequire("electron").clipboard.readText(),
+      cacheAvailable: () => typeof nativeRequire === "function" && !!api.Plugins?.folder,
+      get config() {
+        return api.Config;
+      },
+      createConfig(vectorSpec) {
+        const exported = { exports: {} };
+        new Function("require", "module", storageSource())(nativeRequire, exported);
+        const filesystem = nativeRequire("fs");
+        const fs = Object.fromEntries(["mkdir", "rmdir", "readdir", "lstat", "stat", "realpath", "readFile", "writeFile", "rename", "unlink"].map((method) => [method, (...args) => typeof filesystem[method] === "function" ? file(method, ...args) : Promise.resolve().then(() => filesystem[method + "Sync"](...args))]));
+        if (filesystem.realpathSync) fs.realpath = (file2) => Promise.resolve().then(() => filesystem.realpathSync(file2));
+        const runtime = globalThis.process || nativeRequire("process");
+        const store = exported.exports.createConfigStore({ fs, root: paths.dataRoot(), vectorSpec, legacyPluginsRoot: api.Plugins.folder, pid: runtime.pid });
+        return {
+          open: () => store.open(Object.fromEntries(
+            ["dccons", "favorites", "recent", "personalCons", "collapsedPacks", "embeddingEnabled", "dcconsBeforeDedup"].map((key) => [key, api.Data.load("discord-dccon", key)]).filter(([, value]) => value !== void 0)
+          )),
+          save: (...args) => store.save(...args)
+        };
+      },
+      data: { load: (key) => api.Data.load("discord-dccon", key), save: (key, value) => api.Data.save("discord-dccon", key, value) },
+      get composer() {
+        return api.Composer;
+      },
+      get logger() {
+        return api.Logger;
+      },
+      get ui() {
+        return api.UI;
+      },
+      styles: { add: (id, css) => api.DOM.addStyle(id, css), remove: (id) => api.DOM.removeStyle(id) }
+    };
+  }
+  return __toCommonJS(betterdiscord_exports);
+})();
+const platform = typeof DCConPlatform !== "undefined" ? DCConPlatform
+  : DCConPlatformAdapters.createBetterDiscordPlatform(BdApi, typeof require === "function" ? require : undefined, () => SHARED_STORAGE_SOURCE);
+// END GENERATED PLATFORM
 
 const DCConBaseURL = "https://dcimg5.dcinside.com/dccon.php?no=";
 const DCConProxyURL = "https://dccon-proxy.minibox.workers.dev/?no=";
 
-class DCConImage extends BdApi.React.Component {
+class DCConImage extends platform.react.Component {
   constructor(props) { super(props); this.state = {source: undefined}; }
   componentDidMount() { this.load(); }
   componentDidUpdate(previous) { if (previous.src !== this.props.src) this.load(); }
@@ -32,12 +173,12 @@ class DCConImage extends BdApi.React.Component {
     this.url = undefined;
   }
   load() {
-    if (!BdApi.Net?.resolveImage) return;
+    if (!platform.net?.resolveImage) return;
     this.release();
     this.setState({source: undefined});
     const download = () => {
       const controller = this.controller = new AbortController();
-      BdApi.Net.resolveImage(this.props.src, controller.signal).then(blob => {
+      platform.net.resolveImage(this.props.src, controller.signal).then(blob => {
         if (controller.signal.aborted) return;
         this.url = URL.createObjectURL(blob);
         this.setState({source: this.url});
@@ -52,10 +193,10 @@ class DCConImage extends BdApi.React.Component {
     observer.observe(this.image);
   }
   render() {
-    return BdApi.React.createElement("img", {...this.props,
+    return platform.react.createElement("img", {...this.props,
       ref: image => { this.image = image; },
-      src: BdApi.Net?.resolveImage ? this.state.source : this.props.src,
-      loading: BdApi.Net?.resolveImage ? "eager" : this.props.loading,
+      src: platform.net?.resolveImage ? this.state.source : this.props.src,
+      loading: platform.net?.resolveImage ? "eager" : this.props.loading,
     });
   }
 }
@@ -63,7 +204,7 @@ class DCConImage extends BdApi.React.Component {
 const ManduIcon = (props) => {
   const size = props.size || "24px";
 
-  return BdApi.React.createElement(
+  return platform.react.createElement(
     "svg",
     {
       viewBox: "0 0 512 512",
@@ -72,7 +213,7 @@ const ManduIcon = (props) => {
       width: size,
       height: size,
     },
-    BdApi.React.createElement("path", {
+    platform.react.createElement("path", {
       transform: "translate(0,512) scale(0.1,-0.1)",
       fill: "currentColor",
       d: "M2490 4778 c-142 -20 -270 -116 -332 -248 -30 -65 -35 -70 -58 -65 -60 14 -195 17 -249 5 -179 -39 -278 -147 -360 -391 -26 -79 -30 -85 -72 -108 -341 -182 -501 -295 -723 -511 -340 -331 -569 -722 -654 -1120 -91 -420 -29 -784 190 -1112 74 -111 257 -298 373 -380 480 -339 1130 -509 1955 -509 733 0 1322 133 1785 401 148 86 244 159 365 280 169 167 278 341 344 545 119 368 71 803 -133 1220 -126 255 -278 462 -497 675 -222 216 -383 329 -723 511 -44 23 -45 26 -82 137 -21 63 -50 134 -65 159 -53 91 -150 164 -263 199 -56 18 -182 19 -245 3 -26 -6 -48 -10 -49 -8 -2 2 -18 35 -36 72 -61 126 -192 226 -316 242 -27 3 -59 7 -70 9 -11 2 -49 -1 -85 -6z m-470 -1163 c62 -32 92 -105 72 -174 -17 -55 -364 -396 -409 -403 -111 -16 -198 72 -178 179 6 32 32 64 173 207 92 92 181 177 197 187 36 23 105 25 145 4z m621 -8 c64 -42 70 -68 67 -284 -3 -177 -5 -194 -24 -220 -47 -63 -132 -84 -195 -47 -70 41 -74 54 -77 267 -2 168 0 196 15 227 26 50 76 80 133 80 32 0 58 -7 81 -23z m597 9 c15 -8 104 -92 199 -188 187 -189 198 -207 174 -288 -13 -45 -69 -96 -112 -102 -74 -11 -86 -4 -276 185 -192 189 -211 216 -200 284 8 46 30 79 70 103 38 24 106 26 145 6z",
@@ -98,27 +239,19 @@ const PluginEvents = {
     }
   },
 };
-const LocaleStore = BdApi.Webpack.getByKeys("locale", "initialize");
-
-const classes = {
-  icon: BdApi.Webpack.getByKeys("icon", "active", "buttonWrapper") ?? {},
-  textarea: BdApi.Webpack.getByKeys("channelTextArea", "buttonContainer", "button") ?? {},
-};
+const LocaleStore = platform.discord.locale;
+const classes = platform.discord.classes;
 
 let currentChannelId = "";
 
 // Both installations mount the picker beside the native composer controls.
 function mountToolbar(Button) {
   const roots = new Map();
-  const store = BdApi.Webpack.getStore("SelectedChannelStore");
+  const store = platform.discord.selectedChannelStore();
   let pending = false, stopped = false;
   function channelFor(editor) {
-    if (BdApi.Composer?.targetFor) return BdApi.Composer.targetFor(editor);
-    for (let fiber = BdApi.ReactUtils.getInternalInstance(editor); fiber; fiber = fiber.return) {
-      const channel = fiber.memoizedProps?.channel;
-      if (channel?.id) return channel.id;
-    }
-    return store?.getChannelId?.();
+    if (platform.composer?.targetFor) return platform.composer.targetFor(editor);
+    return platform.discord.channelFor(editor);
   }
   function update() {
     pending = false;
@@ -139,12 +272,12 @@ function mountToolbar(Button) {
         host.className = "dccon-toolbar-host";
         host.style.cssText = "display:flex;align-items:center;flex:0 0 auto";
         toolbar.append(host);
-        entry = {host, root: BdApi.ReactDOM.createRoot(host)};
+        entry = {host, root: platform.reactDOM.createRoot(host)};
         roots.set(toolbar, entry);
       }
       if (entry.channelId !== channelId) {
         entry.channelId = channelId;
-        entry.root.render(BdApi.React.createElement(Button, {channelId}));
+        entry.root.render(platform.react.createElement(Button, {channelId}));
       }
     }
     for (const [toolbar, entry] of roots) if (!active.has(toolbar)) {
@@ -259,7 +392,7 @@ function getLocaleStrings() {
 // 디시콘 API 관련 함수
 const getDCCon = (idx) => {
   return new Promise((resolve, reject) => {
-    BdApi.Net.fetch("https://dccon.dcinside.com/index/package_detail", {
+    platform.net.fetch("https://dccon.dcinside.com/index/package_detail", {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -291,7 +424,7 @@ const getDCCon = (idx) => {
 };
 
 // DCCon 버튼 컴포넌트
-class DCConButton extends BdApi.React.Component {
+class DCConButton extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = { active: false, page: "picker" };
@@ -346,7 +479,7 @@ class DCConButton extends BdApi.React.Component {
   }
 
   render() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     const expanded = this.state.page === "picker" && activeQueue(this.props.channelId).length > 0;
     const viewport = window.visualViewport;
     const viewportWidth = viewport?.width ?? window.innerWidth;
@@ -368,7 +501,7 @@ class DCConButton extends BdApi.React.Component {
         onPointerDown: (event) => { event.preventDefault(); event.stopPropagation(); },
         onClick: (event) => { event.stopPropagation(); this.toggle(); },
       }, h(ManduIcon)),
-      this.state.active && BdApi.ReactDOM.createPortal(
+      this.state.active && platform.reactDOM.createPortal(
         h("div", { className: "dccon-overlay", onMouseDown: this.close },
           h("section", {
             className: "dccon-popover" + (expanded ? " dccon-popover-expanded" : ""),
@@ -400,37 +533,14 @@ class DCConButton extends BdApi.React.Component {
 const PERSONAL_PACK = "personal-cons";
 function personalFile(con) {
   if (!/^personal:[a-f0-9]{64}$/.test(con.path)) throw Error("개별 콘 파일 정보가 올바르지 않습니다.");
-  return require("path").join(sharedRoot(), "discord-dccon-library", con.path.slice(9));
+  return platform.paths.join(sharedRoot(), "discord-dccon-library", con.path.slice(9));
 }
 function imageFS(method, ...args) {
-  return new Promise((resolve, reject) => require("fs")[method](...args, (error, value) => {
-    if (!error) return resolve(value);
-    if (!error.code) {
-      const code = /(?:^|Error: )(E[A-Z0-9]+):/.exec(error.message)?.[1];
-      if (code) error.code = code;
-    }
-    reject(error);
-  }));
+  return platform.file(method, ...args);
 }
-function appDataDirectory(platform, env, home) {
-  const path = require("path");
-  if (platform === "win32") return env.APPDATA || path.join(home, "AppData", "Roaming");
-  if (platform === "darwin") return path.join(home, "Library", "Application Support");
-  return path.join(home, ".config");
-}
-function cachePath(...parts) {
-  const path = require("path");
-  if (BdApi.Plugins.cacheFolder) return path.join(BdApi.Plugins.cacheFolder, ...parts);
-  const runtime = globalThis.process || require("process");
-  return path.join(appDataDirectory(runtime.platform, runtime.env, require("os").homedir()),
-    "discord-dccon", "cache", ...parts);
-}
-function legacyCachePath(...parts) {
-  return require("path").join(BdApi.Plugins.folder, "discord-dccon-cache", ...parts);
-}
-function sharedRoot() {
-  return BdApi.Plugins.dataFolder || require("path").dirname(cachePath());
-}
+function cachePath(...parts) { return platform.paths.cache(...parts); }
+function legacyCachePath(...parts) { return platform.paths.legacyCache(...parts); }
+function sharedRoot() { return platform.paths.dataRoot(); }
 function cacheFiles() {
   return Object.fromEntries(["readFile", "mkdir", "writeFile", "rename", "unlink"].map(method =>
     [method, (...args) => imageFS(method, ...args)]));
@@ -438,7 +548,7 @@ function cacheFiles() {
 const cacheSession = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
 let cacheWriteSequence = 0;
 async function writeCacheFile(file, bytes, fs = cacheFiles(), checkActive = () => {}) {
-  await fs.mkdir(require("path").dirname(file), {recursive: true});
+  await fs.mkdir(platform.paths.dirname(file), {recursive: true});
   const temporary = file + ".tmp-" + cacheSession + "-" + ++cacheWriteSequence;
   let committed = false;
   try {
@@ -457,7 +567,7 @@ async function writeCacheFile(file, bytes, fs = cacheFiles(), checkActive = () =
   } finally {
     if (!committed && fs.unlink) {
       try {await fs.unlink(temporary);} catch (error) {
-        if (error.code !== "ENOENT") BdApi.Logger.error("discord-dccon", "Temporary cache cleanup failed", error);
+        if (error.code !== "ENOENT") platform.logger.error("discord-dccon", "Temporary cache cleanup failed", error);
       }
     }
   }
@@ -470,30 +580,14 @@ async function readCacheFile(kind, name, fs = cacheFiles()) {
   const bytes = await fs.readFile(legacy, null);
   if (typeof bytes !== "string") {
     try {await writeCacheFile(file, bytes, fs);}
-    catch (error) {BdApi.Logger.error("discord-dccon", "Cache migration write failed", error);}
+    catch (error) {platform.logger.error("discord-dccon", "Cache migration write failed", error);}
   }
   return bytes;
 }
 const SharedConfig = {
   data: null, backend: null, pending: [], work: Promise.resolve(),
   async open() {
-    if (BdApi.Config) this.backend = BdApi.Config;
-    else {
-      const exported = {exports: {}};
-      new Function("require", "module", SHARED_STORAGE_SOURCE)(require, exported);
-      const filesystem = require("fs");
-      const fs = Object.fromEntries(["mkdir", "rmdir", "readdir", "lstat", "stat", "realpath", "readFile", "writeFile", "rename", "unlink"].map(method =>
-        [method, (...args) => typeof filesystem[method] === "function" ? imageFS(method, ...args)
-          : Promise.resolve().then(() => filesystem[method + "Sync"](...args))]));
-      if (filesystem.realpathSync) fs.realpath = file => Promise.resolve().then(() => filesystem.realpathSync(file));
-      const runtime = globalThis.process || require("process");
-      const store = exported.exports.createConfigStore({fs, root: sharedRoot(), vectorSpec: EMBEDDING_SPEC,
-        legacyPluginsRoot: BdApi.Plugins.folder, pid: runtime.pid});
-      this.backend = {open: () => store.open(Object.fromEntries(
-        ["dccons", "favorites", "recent", "personalCons", "collapsedPacks", "embeddingEnabled", "dcconsBeforeDedup"]
-          .map(key => [key, BdApi.Data.load("discord-dccon", key)]).filter(([, value]) => value !== undefined))),
-        save: (...args) => store.save(...args)};
-    }
+    this.backend = platform.config || platform.createConfig(EMBEDDING_SPEC);
     this.data = structuredClone((await this.call("open")).settings);
   },
   async call(method, ...args) {
@@ -511,8 +605,8 @@ const SharedConfig = {
     });
     this.work = request.catch(error => {
       this.pending = this.pending.filter(item => item !== operation);
-      BdApi.Logger.error("discord-dccon", "Shared configuration save failed", error);
-      BdApi.UI.showToast("설정 저장 실패: " + error.message, {type: "error"});
+      platform.logger.error("discord-dccon", "Shared configuration save failed", error);
+      platform.ui.showToast("설정 저장 실패: " + error.message, {type: "error"});
     });
     return request;
   },
@@ -580,7 +674,7 @@ async function preparePersonalCon(text, signal) {
   let response;
   for (let redirects = 0; redirects <= 5; redirects++) {
     if (signal?.aborted) throw Error("추가가 취소되었습니다.");
-    response = await BdApi.Net.fetch(url.href, {responseType: "arraybuffer", redirect: "manual", signal,
+    response = await platform.net.fetch(url.href, {responseType: "arraybuffer", redirect: "manual", signal,
       headers: {Referer: url.hostname === "ac.arca.live" ? "https://arca.live/" : "https://dcimg5.dcinside.com"}});
     if (![301, 302, 303, 307, 308].includes(response.status)) break;
     const location = response.headers?.get?.("location");
@@ -602,14 +696,14 @@ async function preparePersonalCon(text, signal) {
   const bitmap = await createImageBitmap(file);
   bitmap.close();
   if (signal?.aborted) throw Error("추가가 취소되었습니다.");
-  const hash = require("crypto").createHash("sha256").update(bytes).digest("hex");
+  const hash = platform.sha256(bytes);
   return {file, con: {idx: "personal-" + hash, path: "personal:" + hash, ext, title: "개별 콘", packageIdx: PERSONAL_PACK}};
 }
 async function storePersonalCon(prepared, title, signal) {
   const {con, file} = prepared;
   if (personalCons().some(item => item.path === con.path)) throw Error("이미 등록된 콘입니다.");
   const target = personalFile(con);
-  await imageFS("mkdir", require("path").dirname(target), {recursive: true});
+  await imageFS("mkdir", platform.paths.dirname(target), {recursive: true});
   const bytes = await WebPCache.convert(new Uint8Array(await file.arrayBuffer()));
   if (signal?.aborted) throw Error("추가가 취소되었습니다.");
   await writeCacheFile(target, bytes, undefined, () => {
@@ -649,7 +743,7 @@ const SPLIT_WORKER_SOURCE = "var Gi=Object.create;var ri=Object.defineProperty;v
 // END GENERATED SPLIT WORKER
 
 // BEGIN GENERATED SHARED STORAGE
-const SHARED_STORAGE_SOURCE = "const path = require('path');\r\nconst crypto = require('crypto');\r\n\r\nfunction digest(bytes) {return crypto.createHash('sha256').update(bytes).digest('hex');}\r\nfunction validVector(vector) {\r\n  return Array.isArray(vector) && vector.length === 768 && vector.every(Number.isFinite) &&\r\n    Math.abs(Math.hypot(...vector) - 1) < 0.001;\r\n}\r\nasync function readConfig(fs, root) {\r\n  let text;\r\n  try {text = await fs.readFile(path.join(root, 'config.json'), 'utf8');}\r\n  catch (error) {if (error.code === 'ENOENT') return null; throw error;}\r\n  const state = JSON.parse(text);\r\n  if (!Number.isInteger(state.version) || state.version < 1 || !state.settings || typeof state.settings !== 'object' || Array.isArray(state.settings))\r\n    throw Error('Invalid shared configuration');\r\n  return state;\r\n}\r\nasync function atomicJSON(ctx, file, value) {\r\n  await ctx.fs.mkdir(path.dirname(file), {recursive: true});\r\n  const temporary = file + '.tmp-' + ctx.token + '-' + ++ctx.sequence;\r\n  try {\r\n    await ctx.fs.writeFile(temporary, JSON.stringify(value));\r\n    await rename(ctx.fs, temporary, file);\r\n  } catch (error) {\r\n    try {await ctx.fs.unlink(temporary);} catch { /* Keep the previously committed state. */ }\r\n    throw error;\r\n  }\r\n}\r\nasync function rename(fs, source, target) {\r\n  for (let attempt = 0; ; attempt++) {\r\n    try {return await fs.rename(source, target);}\r\n    catch (error) {\r\n      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error;\r\n      await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));\r\n    }\r\n  }\r\n}\r\nasync function exists(fs, file) {\r\n  try {await fs.stat(file); return true;} catch (error) {if (error.code === 'ENOENT') return false; throw error;}\r\n}\r\nfunction within(root, file) {\r\n  const relative = path.relative(root, file);\r\n  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw Error('Migration path escapes cache root');\r\n}\r\nasync function moveFile(ctx, source, target) {\r\n  within(ctx.root, target);\r\n  await ctx.fs.mkdir(path.dirname(target), {recursive: true});\r\n  try {await ctx.fs.rename(source, target);}\r\n  catch (error) {\r\n    if (error.code !== 'EXDEV') throw error;\r\n    const temporary = target + '.tmp-' + ctx.token + '-' + ++ctx.sequence;\r\n    try {\r\n      if (ctx.fs.copyFile) await ctx.fs.copyFile(source, temporary);\r\n      else await ctx.fs.writeFile(temporary, await ctx.fs.readFile(source, null));\r\n      if (await ctx.hashFile(source) !== await ctx.hashFile(temporary)) throw Error('Migration copy verification failed');\r\n      await ctx.fs.rename(temporary, target);\r\n      await ctx.fs.unlink(source);\r\n    } catch (copyError) {\r\n      try {await ctx.fs.unlink(temporary);} catch { /* Retain the source on failure. */ }\r\n      throw copyError;\r\n    }\r\n  }\r\n  ctx.report.moved++;\r\n}\r\nasync function archiveFile(ctx, source, legacyRoot, relative) {\r\n  const archive = path.join(ctx.cacheRoot, 'migration-backup', 'v2', digest(legacyRoot), relative);\r\n  if (await exists(ctx.fs, archive)) {\r\n    const hash = await ctx.hashFile(source);\r\n    if (hash === await ctx.hashFile(archive)) {await ctx.fs.unlink(source); ctx.report.duplicates++; return;}\r\n    await moveFile(ctx, source, archive + '.' + hash);\r\n  } else await moveFile(ctx, source, archive);\r\n  ctx.report.archived++;\r\n}\r\nasync function migrateVectors(ctx, source, legacyRoot, relative) {\r\n  let saved;\r\n  try {saved = JSON.parse(await ctx.fs.readFile(source, 'utf8'));}\r\n  catch { /* Preserve an unreadable legacy index in the migration backup. */ }\r\n  if (saved && [ctx.vectorSpec, 'q8-560-gif3-browser-v1'].includes(saved.spec) && saved.vectors) {\r\n    for (const [key, vector] of Object.entries(saved.vectors)) {\r\n      if (!validVector(vector) || (saved.spec !== ctx.vectorSpec && key.endsWith(':gif'))) continue;\r\n      const target = path.join(ctx.cacheRoot, 'vectors', ctx.vectorSpec, digest(key) + '.json');\r\n      let current;\r\n      try {current = JSON.parse(await ctx.fs.readFile(target, 'utf8'));} catch { /* Write a missing or invalid vector. */ }\r\n      if (current?.spec === ctx.vectorSpec && current.key === key && validVector(current.vector)) continue;\r\n      await atomicJSON(ctx, target, {spec: ctx.vectorSpec, key, vector});\r\n      ctx.report.vectors++;\r\n    }\r\n  }\r\n  await archiveFile(ctx, source, legacyRoot, relative);\r\n}\r\nasync function migration_v2(ctx) {\r\n  for (const legacyRoot of ctx.legacyRoots) {\r\n    if (!['discord-dccon-cache', 'DCCon-cache'].includes(path.basename(legacyRoot))) throw Error('Unexpected legacy cache directory');\r\n    if (legacyRoot === ctx.cacheRoot) throw Error('Legacy and current cache directories must differ');\r\n    let realRoot;\r\n    async function visit(directory) {\r\n      within(legacyRoot, directory);\r\n      let entries;\r\n      try {entries = await ctx.fs.readdir(directory);}\r\n      catch (error) {if (error.code === 'ENOENT') return; throw error;}\r\n      for (const name of entries.sort()) {\r\n        const source = path.join(directory, name), info = await ctx.fs.lstat(source);\r\n        within(legacyRoot, source);\r\n        if (info.isSymbolicLink()) throw Error('Symbolic links in legacy cache require manual migration');\r\n        // BetterDiscord's lstat shim follows links. Native Node lstat already\r\n        // detects them and avoids false positives from Windows file virtualization.\r\n        if (ctx.verifyRealPaths) {\r\n          const expected = path.join(realRoot, path.relative(legacyRoot, source));\r\n          const actual = await ctx.fs.realpath(source);\r\n          const same = path.sep !== '/' ? expected.toLowerCase() === actual.toLowerCase() : expected === actual;\r\n          if (!same) throw Error('Symbolic links in legacy cache require manual migration');\r\n        }\r\n        if (info.isDirectory()) {await visit(source); continue;}\r\n        if (!info.isFile()) throw Error('Unsupported legacy cache entry');\r\n        const relative = path.relative(legacyRoot, source), parts = relative.split(path.sep);\r\n        if (parts.length === 2 && parts[0] === 'embedding-gemma2' && name === 'vectors-v1.json') {\r\n          await migrateVectors(ctx, source, legacyRoot, relative); continue;\r\n        }\r\n        let target;\r\n        if (parts.length === 1 && /^[a-f0-9]{64}$/.test(name)) target = path.join(ctx.cacheRoot, 'images', name);\r\n        if (parts.length === 2 && /^[a-f0-9]{64}$/.test(name)) {\r\n          const category = {merged: 'merged', 'webp-codecs': 'webp-codecs', 'embedding-gemma2': 'models'}[parts[0]];\r\n          if (category) target = path.join(ctx.cacheRoot, category, name);\r\n        }\r\n        if (!target) {await archiveFile(ctx, source, legacyRoot, relative); continue;}\r\n        if (await exists(ctx.fs, target)) {\r\n          if (await ctx.hashFile(source) === await ctx.hashFile(target)) {await ctx.fs.unlink(source); ctx.report.duplicates++;}\r\n          else await archiveFile(ctx, source, legacyRoot, relative);\r\n        } else await moveFile(ctx, source, target);\r\n      }\r\n      await ctx.fs.rmdir(directory);\r\n    }\r\n    // Windows virtualization can reveal an underlying directory after moving\r\n    // its overlay. Finish all visible layers before committing this version.\r\n    while (await exists(ctx.fs, legacyRoot)) {\r\n      if ((await ctx.fs.lstat(legacyRoot)).isSymbolicLink()) throw Error('Legacy cache root must not be a symbolic link');\r\n      if (ctx.verifyRealPaths) {\r\n        realRoot = await ctx.fs.realpath(legacyRoot);\r\n        const expected = path.join(await ctx.fs.realpath(path.dirname(legacyRoot)), path.basename(legacyRoot));\r\n        const same = path.sep !== '/' ? expected.toLowerCase() === realRoot.toLowerCase() : expected === realRoot;\r\n        if (!same) throw Error('Legacy cache root must not be a symbolic link');\r\n      }\r\n      await visit(legacyRoot);\r\n    }\r\n  }\r\n}\r\nfunction defaultLegacyRoots(cacheRoot) {\r\n  const appData = path.dirname(path.dirname(cacheRoot));\r\n  return [path.join(appData, 'BetterDiscord', 'plugins', 'discord-dccon-cache'),\r\n    path.join(appData, 'discord-dccon', 'discord-dccon-cache'),\r\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon-cache'),\r\n    path.join(appData, 'discord-dccon', 'DCCon-cache')];\r\n}\r\n\r\n// Electron's contextBridge drops Error.code from BetterDiscord's fs shim.\r\nfunction normalizeFS(backend) {\r\n  return new Proxy(backend, {get(target, key) {\r\n    const method = target[key];\r\n    if (typeof method !== 'function') return method;\r\n    return async (...args) => {\r\n      try {return await method.apply(target, args);}\r\n      catch (error) {\r\n        if (!error.code) {\r\n          const code = /(?:^|Error: )(E[A-Z0-9]+):/.exec(error.message)?.[1];\r\n          if (code) error.code = code;\r\n        }\r\n        throw error;\r\n      }\r\n    };\r\n  }});\r\n}\r\nconst listKeys = new Set(['dccons', 'favorites', 'recent', 'personalCons']);\r\nfunction itemKey(key, item) {\r\n  return key === 'dccons' ? String(item.info.package_idx) : item.path + ':' + item.ext;\r\n}\r\nfunction same(a, b) {return JSON.stringify(a) === JSON.stringify(b);}\r\nfunction mergeSetting(key, before, next, current) {\r\n  if (listKeys.has(key) && Array.isArray(next)) {\r\n    const previous = new Map((before || []).map(item => [itemKey(key, item), item]));\r\n    const desired = new Map(next.map(item => [itemKey(key, item), item]));\r\n    const latest = new Map((current || []).map(item => [itemKey(key, item), item]));\r\n    for (const id of previous.keys()) if (!desired.has(id)) latest.delete(id);\r\n    const ordered = new Map();\r\n    for (const [id, item] of desired) {\r\n      if (!previous.has(id) || !same(previous.get(id), item)) latest.set(id, item);\r\n      if (latest.has(id)) ordered.set(id, latest.get(id));\r\n    }\r\n    for (const [id, item] of latest) if (!ordered.has(id)) ordered.set(id, item);\r\n    return [...ordered.values()];\r\n  }\r\n  if (key === 'collapsedPacks' && next && typeof next === 'object') {\r\n    const result = {...current};\r\n    for (const name of new Set([...Object.keys(before || {}), ...Object.keys(next)])) {\r\n      if (same(before?.[name], next[name])) continue;\r\n      if (Object.hasOwn(next, name)) result[name] = next[name]; else delete result[name];\r\n    }\r\n    return result;\r\n  }\r\n  return next;\r\n}\r\nasync function importSettings(ctx, preferred) {\r\n  const appData = path.dirname(ctx.root), legacy = ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins');\r\n  const sources = [path.join(legacy, 'discord-dccon.config.json'),\r\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon.config.json'),\r\n    path.join(appData, 'discord-dccon', 'discord-dccon.config.json')];\r\n  const settings = {};\r\n  for (const source of sources) {\r\n    let raw;\r\n    try {raw = await ctx.fs.readFile(source, 'utf8');}\r\n    catch (error) {if (error.code === 'ENOENT') continue; throw error;}\r\n    const value = JSON.parse(raw);\r\n    if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid legacy settings');\r\n    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', digest(source) + '.json'), value);\r\n    for (const [key, item] of Object.entries(value)) settings[key] = mergeSetting(key, undefined, item, settings[key]);\r\n  }\r\n  for (const [key, item] of Object.entries(preferred)) settings[key] = mergeSetting(key, undefined, item, settings[key]);\r\n  // Keep an independent backup of the imported IndexedDB/BD snapshot.\r\n  if (Object.keys(preferred).length)\r\n    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', 'imported-' + digest(JSON.stringify(preferred)) + '.json'), preferred);\r\n  return settings;\r\n}\r\nasync function migrateLibrary(ctx) {\r\n  const appData = path.dirname(ctx.root), destination = path.join(ctx.root, 'discord-dccon-library');\r\n  const roots = [path.join(ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins'), 'discord-dccon-library'),\r\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon-library')];\r\n  for (const root of roots) {\r\n    if (!await exists(ctx.fs, root)) continue;\r\n    const realRoot = await ctx.fs.realpath(root);\r\n    if (ctx.verifyRealPaths) {\r\n      const expected = path.join(await ctx.fs.realpath(path.dirname(root)), path.basename(root));\r\n      if (path.sep === '/' ? realRoot !== expected : realRoot.toLowerCase() !== expected.toLowerCase()) throw Error('Library root must not be a symbolic link');\r\n    }\r\n    async function visit(directory) {\r\n      const info = await ctx.fs.lstat(directory);\r\n      if (info.isSymbolicLink()) throw Error('Symbolic links in legacy library require manual migration');\r\n      if (ctx.verifyRealPaths) {\r\n        const actual = await ctx.fs.realpath(directory), expected = path.join(realRoot, path.relative(root, directory));\r\n        if (path.sep === '/' ? actual !== expected : actual.toLowerCase() !== expected.toLowerCase()) throw Error('Library path escapes source');\r\n      }\r\n      if (info.isDirectory()) {\r\n        for (const name of (await ctx.fs.readdir(directory)).sort()) await visit(path.join(directory, name));\r\n        await ctx.fs.rmdir(directory); return;\r\n      }\r\n      if (!info.isFile()) throw Error('Unsupported legacy library entry');\r\n      const relative = path.relative(root, directory);\r\n      const target = /^[a-f0-9]{64}$/.test(relative) ? path.join(destination, relative)\r\n        : path.join(ctx.root, 'migration-backup', 'library', digest(root), relative);\r\n      if (await exists(ctx.fs, target)) {\r\n        if (await ctx.hashFile(directory) === await ctx.hashFile(target)) {await ctx.fs.unlink(directory); return;}\r\n        await moveFile(ctx, directory, path.join(ctx.root, 'migration-backup', 'library', digest(root), relative + '.' + await ctx.hashFile(directory)));\r\n      } else await moveFile(ctx, directory, target);\r\n    }\r\n    while (await exists(ctx.fs, root)) await visit(root);\r\n  }\r\n}\r\nasync function upgradeV2(ctx) {\r\n  const oldMarker = path.join(ctx.cacheRoot, 'migration.json');\r\n  let marker;\r\n  try {marker = JSON.parse(await ctx.fs.readFile(oldMarker, 'utf8'));}\r\n  catch (error) {if (error.code !== 'ENOENT') throw error;}\r\n  if (marker && (!Number.isInteger(marker.version) || marker.version < 1)) throw Error('Invalid legacy cache version');\r\n  if (marker?.version > 2) throw Object.assign(Error('Cache format is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});\r\n  await migration_v2(ctx);\r\n  await migrateLibrary(ctx);\r\n  if (marker) await moveFile(ctx, oldMarker, path.join(ctx.root, 'migration-backup', 'cache-migration.json'));\r\n}\r\nfunction checkVersion(config, latest) {\r\n  if (config.version > latest) throw Object.assign(Error('Configuration is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});\r\n}\r\nfunction createConfigStore(options, migrations = {2: upgradeV2}) {\r\n  if (!/^[a-zA-Z0-9-]+$/.test(options.vectorSpec)) throw Error('Invalid vector cache version');\r\n  const fs = normalizeFS(options.fs || require('fs').promises), root = path.resolve(options.root);\r\n  const latest = options.latestVersion ?? Math.max(...Object.keys(migrations).map(Number));\r\n  const ownerAlive = options.ownerAlive || (pid => {\r\n    if (typeof process === 'undefined' || process.isWeb) return null;\r\n    try {process.kill(pid, 0); return true;} catch (error) {return error.code !== 'ESRCH';}\r\n  });\r\n  async function locked(action) {\r\n    await fs.mkdir(root, {recursive: true});\r\n    const token = crypto.randomBytes(16).toString('hex'), lock = path.join(root, 'config.lock');\r\n    const ownerFile = path.join(lock, 'owner.json'), pulse = path.join(lock, 'heartbeat'), staleLocks = [], started = Date.now();\r\n    const ctx = {fs, root, cacheRoot: path.join(root, 'cache'), token, sequence: 0, options, vectorSpec: options.vectorSpec,\r\n      verifyRealPaths: !!options.fs, legacyRoots: [...new Set((options.legacyRoots || [\r\n        ...(options.legacyPluginsRoot ? [path.join(options.legacyPluginsRoot, 'discord-dccon-cache')] : []),\r\n        ...defaultLegacyRoots(path.join(root, 'cache'))]).map(value => path.resolve(value)))],\r\n      report: {moved: 0, duplicates: 0, archived: 0, vectors: 0}};\r\n    ctx.hashFile = async file => {\r\n      if (options.fs) return digest(await fs.readFile(file, null));\r\n      const hash = crypto.createHash('sha256');\r\n      for await (const bytes of require('fs').createReadStream(file)) hash.update(bytes);\r\n      return hash.digest('hex');\r\n    };\r\n    const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));\r\n    let staleObservation;\r\n    while (true) {\r\n      try {await fs.mkdir(lock, {recursive: false}); break;}\r\n      catch (error) {if (error.code !== 'EEXIST') throw error;}\r\n      let owner, info;\r\n      try {owner = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch { /* Retry incomplete owner metadata. */ }\r\n      try {info = await fs.stat(pulse);}\r\n      catch (error) {\r\n        if (error.code !== 'ENOENT') throw error;\r\n        try {info = await fs.stat(lock);} catch (missing) {if (missing.code === 'ENOENT') continue; throw missing;}\r\n      }\r\n      const alive = Number.isInteger(owner?.pid) ? ownerAlive(owner.pid) : null;\r\n      const identity = /^[a-f0-9]{32}$/.test(owner?.token) ? owner.token : digest(String(info.birthtimeMs));\r\n      const expired = alive === false || (alive === null && Date.now() - info.mtimeMs > 120000);\r\n      if (expired && staleObservation === identity + ':' + info.mtimeMs) {\r\n        const stale = lock + '.stale-' + identity;\r\n        try {await fs.rename(lock, stale); staleLocks.push(stale); continue;}\r\n        catch (error) {if (!['ENOENT', 'EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code)) throw error;}\r\n      }\r\n      staleObservation = expired ? identity + ':' + info.mtimeMs : undefined;\r\n      if (Date.now() - started > (options.waitMs ?? 60000)) throw Error('Timed out waiting for shared configuration');\r\n      await sleep(100);\r\n    }\r\n    const owner = {pid: options.pid ?? (typeof process === 'undefined' ? 0 : process.pid), token};\r\n    let timer, heartbeat = Promise.resolve();\r\n    try {\r\n      await atomicJSON(ctx, ownerFile, owner);\r\n      await fs.writeFile(pulse, '');\r\n      timer = setInterval(() => {heartbeat = heartbeat.then(() => fs.writeFile(pulse, '')).catch(() => {});}, 5000);\r\n      return await action(ctx);\r\n    } finally {\r\n      clearInterval(timer); await heartbeat;\r\n      let current;\r\n      try {current = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch {}\r\n      if (!current || current.token === token) {\r\n        for (const file of [ownerFile, pulse]) try {await fs.unlink(file);} catch (error) {if (error.code !== 'ENOENT') throw error;}\r\n        await fs.rmdir(lock);\r\n      }\r\n      for (const stale of staleLocks) {\r\n        for (const name of ['owner.json', 'heartbeat']) try {await fs.unlink(path.join(stale, name));} catch (error) {if (error.code !== 'ENOENT') throw error;}\r\n        try {await fs.rmdir(stale);} catch (error) {if (error.code !== 'ENOTEMPTY') throw error;}\r\n      }\r\n    }\r\n  }\r\n  return {\r\n    open(preferred = {}) {return locked(async ctx => {\r\n      let config = await readConfig(fs, root);\r\n      if (!config) {\r\n        config = {version: 1, settings: await importSettings(ctx, preferred)};\r\n        await atomicJSON(ctx, path.join(root, 'config.json'), config);\r\n      }\r\n      checkVersion(config, latest);\r\n      while (config.version < latest) {\r\n        const next = config.version + 1;\r\n        if (typeof migrations[next] !== 'function') throw Error('Missing configuration migration v' + next);\r\n        await migrations[next](ctx);\r\n        config.version = next;\r\n        await atomicJSON(ctx, path.join(root, 'config.json'), config);\r\n      }\r\n      return config;\r\n    });},\r\n    save(key, value, before) {return locked(async ctx => {\r\n      const config = await readConfig(fs, root);\r\n      if (!config) throw Error('Shared configuration has not been initialized');\r\n      checkVersion(config, latest);\r\n      if (config.version !== latest) throw Error('Shared configuration needs migration');\r\n      if (['__proto__', 'constructor', 'prototype'].includes(key)) throw Error('Invalid setting key');\r\n      config.settings[key] = mergeSetting(key, before, value, config.settings[key]);\r\n      await atomicJSON(ctx, path.join(root, 'config.json'), config);\r\n      return config;\r\n    });}\r\n  };\r\n}\r\nmodule.exports = {createConfigStore, migration_v2, normalizeFS, mergeSetting};\r\n";
+const SHARED_STORAGE_SOURCE = "const path = require('path');\nconst crypto = require('crypto');\n\nfunction digest(bytes) {return crypto.createHash('sha256').update(bytes).digest('hex');}\nfunction validVector(vector) {\n  return Array.isArray(vector) && vector.length === 768 && vector.every(Number.isFinite) &&\n    Math.abs(Math.hypot(...vector) - 1) < 0.001;\n}\nasync function readConfig(fs, root) {\n  let text;\n  try {text = await fs.readFile(path.join(root, 'config.json'), 'utf8');}\n  catch (error) {if (error.code === 'ENOENT') return null; throw error;}\n  const state = JSON.parse(text);\n  if (!Number.isInteger(state.version) || state.version < 1 || !state.settings || typeof state.settings !== 'object' || Array.isArray(state.settings))\n    throw Error('Invalid shared configuration');\n  return state;\n}\nasync function atomicJSON(ctx, file, value) {\n  await ctx.fs.mkdir(path.dirname(file), {recursive: true});\n  const temporary = file + '.tmp-' + ctx.token + '-' + ++ctx.sequence;\n  try {\n    await ctx.fs.writeFile(temporary, JSON.stringify(value));\n    await rename(ctx.fs, temporary, file);\n  } catch (error) {\n    try {await ctx.fs.unlink(temporary);} catch { /* Keep the previously committed state. */ }\n    throw error;\n  }\n}\nasync function rename(fs, source, target) {\n  for (let attempt = 0; ; attempt++) {\n    try {return await fs.rename(source, target);}\n    catch (error) {\n      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error;\n      await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));\n    }\n  }\n}\nasync function exists(fs, file) {\n  try {await fs.stat(file); return true;} catch (error) {if (error.code === 'ENOENT') return false; throw error;}\n}\nfunction within(root, file) {\n  const relative = path.relative(root, file);\n  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw Error('Migration path escapes cache root');\n}\nasync function moveFile(ctx, source, target) {\n  within(ctx.root, target);\n  await ctx.fs.mkdir(path.dirname(target), {recursive: true});\n  try {await ctx.fs.rename(source, target);}\n  catch (error) {\n    if (error.code !== 'EXDEV') throw error;\n    const temporary = target + '.tmp-' + ctx.token + '-' + ++ctx.sequence;\n    try {\n      if (ctx.fs.copyFile) await ctx.fs.copyFile(source, temporary);\n      else await ctx.fs.writeFile(temporary, await ctx.fs.readFile(source, null));\n      if (await ctx.hashFile(source) !== await ctx.hashFile(temporary)) throw Error('Migration copy verification failed');\n      await ctx.fs.rename(temporary, target);\n      await ctx.fs.unlink(source);\n    } catch (copyError) {\n      try {await ctx.fs.unlink(temporary);} catch { /* Retain the source on failure. */ }\n      throw copyError;\n    }\n  }\n  ctx.report.moved++;\n}\nasync function archiveFile(ctx, source, legacyRoot, relative) {\n  const archive = path.join(ctx.cacheRoot, 'migration-backup', 'v2', digest(legacyRoot), relative);\n  if (await exists(ctx.fs, archive)) {\n    const hash = await ctx.hashFile(source);\n    if (hash === await ctx.hashFile(archive)) {await ctx.fs.unlink(source); ctx.report.duplicates++; return;}\n    await moveFile(ctx, source, archive + '.' + hash);\n  } else await moveFile(ctx, source, archive);\n  ctx.report.archived++;\n}\nasync function migrateVectors(ctx, source, legacyRoot, relative) {\n  let saved;\n  try {saved = JSON.parse(await ctx.fs.readFile(source, 'utf8'));}\n  catch { /* Preserve an unreadable legacy index in the migration backup. */ }\n  if (saved && [ctx.vectorSpec, 'q8-560-gif3-browser-v1'].includes(saved.spec) && saved.vectors) {\n    for (const [key, vector] of Object.entries(saved.vectors)) {\n      if (!validVector(vector) || (saved.spec !== ctx.vectorSpec && key.endsWith(':gif'))) continue;\n      const target = path.join(ctx.cacheRoot, 'vectors', ctx.vectorSpec, digest(key) + '.json');\n      let current;\n      try {current = JSON.parse(await ctx.fs.readFile(target, 'utf8'));} catch { /* Write a missing or invalid vector. */ }\n      if (current?.spec === ctx.vectorSpec && current.key === key && validVector(current.vector)) continue;\n      await atomicJSON(ctx, target, {spec: ctx.vectorSpec, key, vector});\n      ctx.report.vectors++;\n    }\n  }\n  await archiveFile(ctx, source, legacyRoot, relative);\n}\nasync function migration_v2(ctx) {\n  for (const legacyRoot of ctx.legacyRoots) {\n    if (!['discord-dccon-cache', 'DCCon-cache'].includes(path.basename(legacyRoot))) throw Error('Unexpected legacy cache directory');\n    if (legacyRoot === ctx.cacheRoot) throw Error('Legacy and current cache directories must differ');\n    let realRoot;\n    async function visit(directory) {\n      within(legacyRoot, directory);\n      let entries;\n      try {entries = await ctx.fs.readdir(directory);}\n      catch (error) {if (error.code === 'ENOENT') return; throw error;}\n      for (const name of entries.sort()) {\n        const source = path.join(directory, name), info = await ctx.fs.lstat(source);\n        within(legacyRoot, source);\n        if (info.isSymbolicLink()) throw Error('Symbolic links in legacy cache require manual migration');\n        // BetterDiscord's lstat shim follows links. Native Node lstat already\n        // detects them and avoids false positives from Windows file virtualization.\n        if (ctx.verifyRealPaths) {\n          const expected = path.join(realRoot, path.relative(legacyRoot, source));\n          const actual = await ctx.fs.realpath(source);\n          const same = path.sep !== '/' ? expected.toLowerCase() === actual.toLowerCase() : expected === actual;\n          if (!same) throw Error('Symbolic links in legacy cache require manual migration');\n        }\n        if (info.isDirectory()) {await visit(source); continue;}\n        if (!info.isFile()) throw Error('Unsupported legacy cache entry');\n        const relative = path.relative(legacyRoot, source), parts = relative.split(path.sep);\n        if (parts.length === 2 && parts[0] === 'embedding-gemma2' && name === 'vectors-v1.json') {\n          await migrateVectors(ctx, source, legacyRoot, relative); continue;\n        }\n        let target;\n        if (parts.length === 1 && /^[a-f0-9]{64}$/.test(name)) target = path.join(ctx.cacheRoot, 'images', name);\n        if (parts.length === 2 && /^[a-f0-9]{64}$/.test(name)) {\n          const category = {merged: 'merged', 'webp-codecs': 'webp-codecs', 'embedding-gemma2': 'models'}[parts[0]];\n          if (category) target = path.join(ctx.cacheRoot, category, name);\n        }\n        if (!target) {await archiveFile(ctx, source, legacyRoot, relative); continue;}\n        if (await exists(ctx.fs, target)) {\n          if (await ctx.hashFile(source) === await ctx.hashFile(target)) {await ctx.fs.unlink(source); ctx.report.duplicates++;}\n          else await archiveFile(ctx, source, legacyRoot, relative);\n        } else await moveFile(ctx, source, target);\n      }\n      await ctx.fs.rmdir(directory);\n    }\n    // Windows virtualization can reveal an underlying directory after moving\n    // its overlay. Finish all visible layers before committing this version.\n    while (await exists(ctx.fs, legacyRoot)) {\n      if ((await ctx.fs.lstat(legacyRoot)).isSymbolicLink()) throw Error('Legacy cache root must not be a symbolic link');\n      if (ctx.verifyRealPaths) {\n        realRoot = await ctx.fs.realpath(legacyRoot);\n        const expected = path.join(await ctx.fs.realpath(path.dirname(legacyRoot)), path.basename(legacyRoot));\n        const same = path.sep !== '/' ? expected.toLowerCase() === realRoot.toLowerCase() : expected === realRoot;\n        if (!same) throw Error('Legacy cache root must not be a symbolic link');\n      }\n      await visit(legacyRoot);\n    }\n  }\n}\nfunction defaultLegacyRoots(cacheRoot) {\n  const appData = path.dirname(path.dirname(cacheRoot));\n  return [path.join(appData, 'BetterDiscord', 'plugins', 'discord-dccon-cache'),\n    path.join(appData, 'discord-dccon', 'discord-dccon-cache'),\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon-cache'),\n    path.join(appData, 'discord-dccon', 'DCCon-cache')];\n}\n\n// Electron's contextBridge drops Error.code from BetterDiscord's fs shim.\nfunction normalizeFS(backend) {\n  return new Proxy(backend, {get(target, key) {\n    const method = target[key];\n    if (typeof method !== 'function') return method;\n    return async (...args) => {\n      try {return await method.apply(target, args);}\n      catch (error) {\n        if (!error.code) {\n          const code = /(?:^|Error: )(E[A-Z0-9]+):/.exec(error.message)?.[1];\n          if (code) error.code = code;\n        }\n        throw error;\n      }\n    };\n  }});\n}\nconst listKeys = new Set(['dccons', 'favorites', 'recent', 'personalCons']);\nfunction itemKey(key, item) {\n  return key === 'dccons' ? String(item.info.package_idx) : item.path + ':' + item.ext;\n}\nfunction same(a, b) {return JSON.stringify(a) === JSON.stringify(b);}\nfunction mergeSetting(key, before, next, current) {\n  if (listKeys.has(key) && Array.isArray(next)) {\n    const previous = new Map((before || []).map(item => [itemKey(key, item), item]));\n    const desired = new Map(next.map(item => [itemKey(key, item), item]));\n    const latest = new Map((current || []).map(item => [itemKey(key, item), item]));\n    for (const id of previous.keys()) if (!desired.has(id)) latest.delete(id);\n    const ordered = new Map();\n    for (const [id, item] of desired) {\n      if (!previous.has(id) || !same(previous.get(id), item)) latest.set(id, item);\n      if (latest.has(id)) ordered.set(id, latest.get(id));\n    }\n    for (const [id, item] of latest) if (!ordered.has(id)) ordered.set(id, item);\n    return [...ordered.values()];\n  }\n  if (key === 'collapsedPacks' && next && typeof next === 'object') {\n    const result = {...current};\n    for (const name of new Set([...Object.keys(before || {}), ...Object.keys(next)])) {\n      if (same(before?.[name], next[name])) continue;\n      if (Object.hasOwn(next, name)) result[name] = next[name]; else delete result[name];\n    }\n    return result;\n  }\n  return next;\n}\nasync function importSettings(ctx, preferred) {\n  const appData = path.dirname(ctx.root), legacy = ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins');\n  const sources = [path.join(legacy, 'discord-dccon.config.json'),\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon.config.json'),\n    path.join(appData, 'discord-dccon', 'discord-dccon.config.json')];\n  const settings = {};\n  for (const source of sources) {\n    let raw;\n    try {raw = await ctx.fs.readFile(source, 'utf8');}\n    catch (error) {if (error.code === 'ENOENT') continue; throw error;}\n    const value = JSON.parse(raw);\n    if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid legacy settings');\n    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', digest(source) + '.json'), value);\n    for (const [key, item] of Object.entries(value)) settings[key] = mergeSetting(key, undefined, item, settings[key]);\n  }\n  for (const [key, item] of Object.entries(preferred)) settings[key] = mergeSetting(key, undefined, item, settings[key]);\n  // Keep an independent backup of the imported IndexedDB/BD snapshot.\n  if (Object.keys(preferred).length)\n    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', 'imported-' + digest(JSON.stringify(preferred)) + '.json'), preferred);\n  return settings;\n}\nasync function migrateLibrary(ctx) {\n  const appData = path.dirname(ctx.root), destination = path.join(ctx.root, 'discord-dccon-library');\n  const roots = [path.join(ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins'), 'discord-dccon-library'),\n    path.join(appData, 'discord-dccon-canary', 'discord-dccon-library')];\n  for (const root of roots) {\n    if (!await exists(ctx.fs, root)) continue;\n    const realRoot = await ctx.fs.realpath(root);\n    if (ctx.verifyRealPaths) {\n      const expected = path.join(await ctx.fs.realpath(path.dirname(root)), path.basename(root));\n      if (path.sep === '/' ? realRoot !== expected : realRoot.toLowerCase() !== expected.toLowerCase()) throw Error('Library root must not be a symbolic link');\n    }\n    async function visit(directory) {\n      const info = await ctx.fs.lstat(directory);\n      if (info.isSymbolicLink()) throw Error('Symbolic links in legacy library require manual migration');\n      if (ctx.verifyRealPaths) {\n        const actual = await ctx.fs.realpath(directory), expected = path.join(realRoot, path.relative(root, directory));\n        if (path.sep === '/' ? actual !== expected : actual.toLowerCase() !== expected.toLowerCase()) throw Error('Library path escapes source');\n      }\n      if (info.isDirectory()) {\n        for (const name of (await ctx.fs.readdir(directory)).sort()) await visit(path.join(directory, name));\n        await ctx.fs.rmdir(directory); return;\n      }\n      if (!info.isFile()) throw Error('Unsupported legacy library entry');\n      const relative = path.relative(root, directory);\n      const target = /^[a-f0-9]{64}$/.test(relative) ? path.join(destination, relative)\n        : path.join(ctx.root, 'migration-backup', 'library', digest(root), relative);\n      if (await exists(ctx.fs, target)) {\n        if (await ctx.hashFile(directory) === await ctx.hashFile(target)) {await ctx.fs.unlink(directory); return;}\n        await moveFile(ctx, directory, path.join(ctx.root, 'migration-backup', 'library', digest(root), relative + '.' + await ctx.hashFile(directory)));\n      } else await moveFile(ctx, directory, target);\n    }\n    while (await exists(ctx.fs, root)) await visit(root);\n  }\n}\nasync function upgradeV2(ctx) {\n  const oldMarker = path.join(ctx.cacheRoot, 'migration.json');\n  let marker;\n  try {marker = JSON.parse(await ctx.fs.readFile(oldMarker, 'utf8'));}\n  catch (error) {if (error.code !== 'ENOENT') throw error;}\n  if (marker && (!Number.isInteger(marker.version) || marker.version < 1)) throw Error('Invalid legacy cache version');\n  if (marker?.version > 2) throw Object.assign(Error('Cache format is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});\n  await migration_v2(ctx);\n  await migrateLibrary(ctx);\n  if (marker) await moveFile(ctx, oldMarker, path.join(ctx.root, 'migration-backup', 'cache-migration.json'));\n}\nfunction checkVersion(config, latest) {\n  if (config.version > latest) throw Object.assign(Error('Configuration is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});\n}\nfunction createConfigStore(options, migrations = {2: upgradeV2}) {\n  if (!/^[a-zA-Z0-9-]+$/.test(options.vectorSpec)) throw Error('Invalid vector cache version');\n  const fs = normalizeFS(options.fs || require('fs').promises), root = path.resolve(options.root);\n  const latest = options.latestVersion ?? Math.max(...Object.keys(migrations).map(Number));\n  const ownerAlive = options.ownerAlive || (pid => {\n    if (typeof process === 'undefined' || process.isWeb) return null;\n    try {process.kill(pid, 0); return true;} catch (error) {return error.code !== 'ESRCH';}\n  });\n  async function locked(action) {\n    await fs.mkdir(root, {recursive: true});\n    const token = crypto.randomBytes(16).toString('hex'), lock = path.join(root, 'config.lock');\n    const ownerFile = path.join(lock, 'owner.json'), pulse = path.join(lock, 'heartbeat'), staleLocks = [], started = Date.now();\n    const ctx = {fs, root, cacheRoot: path.join(root, 'cache'), token, sequence: 0, options, vectorSpec: options.vectorSpec,\n      verifyRealPaths: !!options.fs, legacyRoots: [...new Set((options.legacyRoots || [\n        ...(options.legacyPluginsRoot ? [path.join(options.legacyPluginsRoot, 'discord-dccon-cache')] : []),\n        ...defaultLegacyRoots(path.join(root, 'cache'))]).map(value => path.resolve(value)))],\n      report: {moved: 0, duplicates: 0, archived: 0, vectors: 0}};\n    ctx.hashFile = async file => {\n      if (options.fs) return digest(await fs.readFile(file, null));\n      const hash = crypto.createHash('sha256');\n      for await (const bytes of require('fs').createReadStream(file)) hash.update(bytes);\n      return hash.digest('hex');\n    };\n    const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));\n    let staleObservation;\n    while (true) {\n      try {await fs.mkdir(lock, {recursive: false}); break;}\n      catch (error) {if (error.code !== 'EEXIST') throw error;}\n      let owner, info;\n      try {owner = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch { /* Retry incomplete owner metadata. */ }\n      try {info = await fs.stat(pulse);}\n      catch (error) {\n        if (error.code !== 'ENOENT') throw error;\n        try {info = await fs.stat(lock);} catch (missing) {if (missing.code === 'ENOENT') continue; throw missing;}\n      }\n      const alive = Number.isInteger(owner?.pid) ? ownerAlive(owner.pid) : null;\n      const identity = /^[a-f0-9]{32}$/.test(owner?.token) ? owner.token : digest(String(info.birthtimeMs));\n      const expired = alive === false || (alive === null && Date.now() - info.mtimeMs > 120000);\n      if (expired && staleObservation === identity + ':' + info.mtimeMs) {\n        const stale = lock + '.stale-' + identity;\n        try {await fs.rename(lock, stale); staleLocks.push(stale); continue;}\n        catch (error) {if (!['ENOENT', 'EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code)) throw error;}\n      }\n      staleObservation = expired ? identity + ':' + info.mtimeMs : undefined;\n      if (Date.now() - started > (options.waitMs ?? 60000)) throw Error('Timed out waiting for shared configuration');\n      await sleep(100);\n    }\n    const owner = {pid: options.pid ?? (typeof process === 'undefined' ? 0 : process.pid), token};\n    let timer, heartbeat = Promise.resolve();\n    try {\n      await atomicJSON(ctx, ownerFile, owner);\n      await fs.writeFile(pulse, '');\n      timer = setInterval(() => {heartbeat = heartbeat.then(() => fs.writeFile(pulse, '')).catch(() => {});}, 5000);\n      return await action(ctx);\n    } finally {\n      clearInterval(timer); await heartbeat;\n      let current;\n      try {current = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch {}\n      if (!current || current.token === token) {\n        for (const file of [ownerFile, pulse]) try {await fs.unlink(file);} catch (error) {if (error.code !== 'ENOENT') throw error;}\n        await fs.rmdir(lock);\n      }\n      for (const stale of staleLocks) {\n        for (const name of ['owner.json', 'heartbeat']) try {await fs.unlink(path.join(stale, name));} catch (error) {if (error.code !== 'ENOENT') throw error;}\n        try {await fs.rmdir(stale);} catch (error) {if (error.code !== 'ENOTEMPTY') throw error;}\n      }\n    }\n  }\n  return {\n    open(preferred = {}) {return locked(async ctx => {\n      let config = await readConfig(fs, root);\n      if (!config) {\n        config = {version: 1, settings: await importSettings(ctx, preferred)};\n        await atomicJSON(ctx, path.join(root, 'config.json'), config);\n      }\n      checkVersion(config, latest);\n      while (config.version < latest) {\n        const next = config.version + 1;\n        if (typeof migrations[next] !== 'function') throw Error('Missing configuration migration v' + next);\n        await migrations[next](ctx);\n        config.version = next;\n        await atomicJSON(ctx, path.join(root, 'config.json'), config);\n      }\n      return config;\n    });},\n    save(key, value, before) {return locked(async ctx => {\n      const config = await readConfig(fs, root);\n      if (!config) throw Error('Shared configuration has not been initialized');\n      checkVersion(config, latest);\n      if (config.version !== latest) throw Error('Shared configuration needs migration');\n      if (['__proto__', 'constructor', 'prototype'].includes(key)) throw Error('Invalid setting key');\n      config.settings[key] = mergeSetting(key, before, value, config.settings[key]);\n      await atomicJSON(ctx, path.join(root, 'config.json'), config);\n      return config;\n    });}\n  };\n}\nmodule.exports = {createConfigStore, migration_v2, normalizeFS, mergeSetting};\n";
 // END GENERATED SHARED STORAGE
 
 // Pinned libwebp WASM tools. No native executable or model runtime is required.
@@ -668,7 +762,7 @@ const WebPCache = {
       const spec = this.specs[kind], result = [];
       for (const [index, extension] of ["js", "wasm"].entries()) {
         if (index === 0 && spec.source) {result.push(new TextEncoder().encode(spec.source)); continue;}
-        const hash = spec.hashes[index], digest = bytes => require("crypto").createHash("sha256").update(bytes).digest("hex");
+        const hash = spec.hashes[index], digest = bytes => platform.sha256(bytes);
         const target = cachePath("webp-codecs", hash);
         let bytes;
         try {bytes = await readCacheFile("webp-codecs", hash);} catch { /* Download the pinned codec once. */ }
@@ -676,7 +770,7 @@ const WebPCache = {
           if (generation !== this.generation) throw Error("WebP 변환 중단됨");
           const controller = new AbortController(); this.downloads.add(controller);
           try {
-            const response = await BdApi.Net.fetch(spec.wasmURL || `https://cdn.jsdelivr.net/npm/@libwebp-wasm/${spec.name}@${spec.version}/es/${spec.name}.${extension}`,
+            const response = await platform.net.fetch(spec.wasmURL || `https://cdn.jsdelivr.net/npm/@libwebp-wasm/${spec.name}@${spec.version}/es/${spec.name}.${extension}`,
               {responseType: "arraybuffer", signal: controller.signal});
             if (response.ok === false || response.status >= 400) throw Error("WebP 변환기 다운로드 실패");
             bytes = new Uint8Array(await response.arrayBuffer());
@@ -841,9 +935,9 @@ async function getDCConImage(con) {
     }
     let fs, target;
     try {
-      if (typeof require === "function" && BdApi.Plugins?.folder) {
+      if (platform.cacheAvailable()) {
         fs = cacheFiles();
-        const hash = require("crypto").createHash("sha256").update(key).digest("hex");
+        const hash = platform.sha256(key);
         target = cachePath("images", hash);
         const cached = await readCacheFile("images", hash, fs);
         // BetterDiscord defaults to UTF-8, unlike Node. Never construct an image from text.
@@ -851,7 +945,7 @@ async function getDCConImage(con) {
         if (cached.length) return webpFile(cached);
       }
     } catch { /* Missing or unreadable cache: fetch the original. */ }
-    const response = await BdApi.Net.fetch(DCConBaseURL + con.path, {
+    const response = await platform.net.fetch(DCConBaseURL + con.path, {
       responseType: "arraybuffer", headers: { Referer: "https://dcimg5.dcinside.com" },
     });
     if (response.ok === false || response.status >= 400) throw new Error("디시콘 다운로드에 실패했습니다.");
@@ -864,7 +958,7 @@ async function getDCConImage(con) {
       try {
         await writeCacheFile(target, bytes, fs);
       } catch (error) {
-        BdApi.Logger.error("discord-dccon", "Image cache write failed", error);
+        platform.logger.error("discord-dccon", "Image cache write failed", error);
       }
     }
     return webpFile(bytes);
@@ -876,12 +970,12 @@ async function getDCConImage(con) {
 let cacheGeneration = 0;
 let cacheWork = Promise.resolve();
 function warmCache(cons) {
-  if (typeof require !== "function" || !BdApi.Plugins?.folder) return;
+  if (!platform.cacheAvailable()) return;
   const generation = cacheGeneration;
   cacheWork = cacheWork.then(async () => {
     for (const con of cons) {
       if (generation !== cacheGeneration) return;
-      try { await getDCConImage(con); } catch (error) { BdApi.Logger.error("discord-dccon", "Cache preload failed", error); }
+      try { await getDCConImage(con); } catch (error) { platform.logger.error("discord-dccon", "Cache preload failed", error); }
     }
   });
 }
@@ -914,11 +1008,6 @@ function sendErrorDetails(error) {
   };
 }
 
-function isDiscordRest(value) {
-  return value !== null && typeof value === "object" &&
-    ["post", "get", "put", "del"].every(key => typeof value[key] === "function");
-}
-
 function responseShape(response) {
   const body = response?.body;
   const header = response?.headers?.get?.("content-type") ?? response?.headers?.["content-type"];
@@ -938,10 +1027,8 @@ function responseShape(response) {
 
 async function sendImagesDirectly(files, channelId, attempt) {
   markSend(attempt, "모듈 조회");
-  const CloudUpload = BdApi.Webpack.getModule(value => typeof value === "function" &&
-    typeof value.prototype?.trackUploadFinished === "function" && typeof value.prototype?.upload === "function",
-    { searchExports: true });
-  const rest = BdApi.Webpack.getModule(isDiscordRest, { searchExports: true });
+  const CloudUpload = platform.discord.uploadModule();
+  const rest = platform.discord.restModule();
   if (!CloudUpload || !rest) throw new Error("즉시 전송 모듈을 찾지 못했습니다. 진단 탭을 확인해 주세요.");
   attempt.restModule = {
     keys: Object.keys(rest).slice(0, 40),
@@ -1071,8 +1158,8 @@ async function getMergedImage(entries, checkActive) {
   if (!mergedRequests.has(requestKey)) {
     const request = (async () => {
       let target, cached;
-      if (typeof require === "function" && BdApi.Plugins?.folder) {
-        const hash = require("crypto").createHash("sha256").update(key).digest("hex");
+      if (platform.cacheAvailable()) {
+        const hash = platform.sha256(key);
         target = cachePath("merged", hash);
         try {cached = await readCacheFile("merged", hash);} catch { /* Cache miss: compose the animations. */ }
       }
@@ -1086,7 +1173,7 @@ async function getMergedImage(entries, checkActive) {
       if (target) {
         try {
           await writeCacheFile(target, new Uint8Array(await file.arrayBuffer()), undefined, checkActive);
-        } catch (error) {BdApi.Logger.error("discord-dccon", "Merged image cache write failed", error);}
+        } catch (error) {platform.logger.error("discord-dccon", "Merged image cache write failed", error);}
       }
       checkActive();
       return file;
@@ -1110,7 +1197,7 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
   if (sending) sendingChannels.add(channelId);
   PluginEvents.dispatch({ type: "DCCON_BUFFER_UPDATE", channelId });
   const attempt = { startedAt, outcome: "진행 중", keepOpen, phase: "작업 대기",
-    mode: keepOpen ? "버퍼 누적" : BdApi.Composer?.attachFiles ? "입력창 첨부" : "즉시 전송" };
+    mode: keepOpen ? "버퍼 누적" : platform.composer?.attachFiles ? "입력창 첨부" : "즉시 전송" };
   const task = (channelTasks.get(channelId) ?? Promise.resolve()).then(async () => {
     lastSendAttempt = attempt;
     try {
@@ -1149,15 +1236,15 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
             if (generation !== bufferGeneration) throw Error("이미지 합치기가 중단되었습니다.");
           })];
         }
-        if (BdApi.Composer?.attachFiles) {
+        if (platform.composer?.attachFiles) {
           markSend(attempt, "입력창 첨부");
-          await BdApi.Composer.attachFiles(files, channelId);
+          await platform.composer.attachFiles(files, channelId);
         } else {
           await sendImagesDirectly(files, channelId, attempt);
         }
         if (generation === bufferGeneration) updateQueue(channelId, []);
         sentCons = [...queued.map(entry => entry.con), ...(con ? [con] : [])];
-        markSend(attempt, "완료", { outcome: BdApi.Composer?.attachFiles ? "입력창에 전달 완료" : "전송 성공 확인", sentCount: files.length });
+        markSend(attempt, "완료", { outcome: platform.composer?.attachFiles ? "입력창에 전달 완료" : "전송 성공 확인", sentCount: files.length });
       }
       if (sending) {
         let recent = loadData("recent", []);
@@ -1171,8 +1258,8 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
       attempt.outcome = "실패";
       attempt.error = sendErrorDetails(error);
       attempt.updatedAt = new Date().toISOString();
-      BdApi.Logger.error("discord-dccon", "Failed to send discord-dccon:", error);
-      BdApi.UI.showToast((BdApi.Composer?.attachFiles ? "디시콘 첨부 실패 (" : "디시콘 전송 실패 (") + attempt.phase + "): " + error.message, { type: "error", timeout: 10000 });
+      platform.logger.error("discord-dccon", "Failed to send discord-dccon:", error);
+      platform.ui.showToast((platform.composer?.attachFiles ? "디시콘 첨부 실패 (" : "디시콘 전송 실패 (") + attempt.phase + "): " + error.message, { type: "error", timeout: 10000 });
       return false;
     } finally {
       if (sending) sendingChannels.delete(channelId);
@@ -1184,7 +1271,7 @@ const sendDCConMessage = (con, { keepOpen = false, channelId = currentChannelId,
   return task;
 };
 
-class BufferTray extends BdApi.React.Component {
+class BufferTray extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = {mergeReady: false, mergeReason: "애니메이션 2~3개를 모아 주세요."};
@@ -1207,18 +1294,18 @@ class BufferTray extends BdApi.React.Component {
     });
   }
   render() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     const channelId = this.props.channelId;
     const entries = activeQueue(channelId);
     const busy = sendingChannels.has(channelId);
     if (!entries.length && !busy) return null;
     return h("section", { className: "dccon-buffer", "aria-label": "전송 대기 디시콘" },
       h("div", { className: "dccon-buffer-heading" },
-        h("span", {role: "status"}, busy ? (BdApi.Composer?.attachFiles ? "첨부 중…" : "전송 중…") : "모아둔 콘 " + entries.length + "/9"),
+        h("span", {role: "status"}, busy ? (platform.composer?.attachFiles ? "첨부 중…" : "전송 중…") : "모아둔 콘 " + entries.length + "/9"),
         h("div", {className: "dccon-buffer-actions"},
           h("button", {type: "button", disabled: busy, onClick: () => removeBuffered(channelId)}, "전체 비우기"),
           h("button", {type: "button", className: "dccon-buffer-send", disabled: busy || !entries.length,
-            onClick: () => sendDCConMessage(null, {channelId})}, BdApi.Composer?.attachFiles ? "입력창에 첨부" : "전송"))),
+            onClick: () => sendDCConMessage(null, {channelId})}, platform.composer?.attachFiles ? "입력창에 첨부" : "전송"))),
       h("div", {className: "dccon-buffer-preview"},
         h("div", {className: "dccon-buffer-items", "data-count": entries.length}, entries.map((entry, index) => h("button", {
         key: index, type: "button", disabled: busy, title: entry.con.title + " 제거",
@@ -1228,17 +1315,17 @@ class BufferTray extends BdApi.React.Component {
         h("span", {className: "dccon-buffer-remove", "aria-hidden": true}, "×"))))),
       h("button", {type: "button", className: "dccon-buffer-split", disabled: busy || entries.length !== 1,
         title: "이미지 1개를 3×3으로 나눕니다. 애니메이션은 유지됩니다.",
-        onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, BdApi.Composer?.attachFiles ? "9개로 쪼개서 첨부" : "9개로 쪼개서 보내기"),
+        onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, platform.composer?.attachFiles ? "9개로 쪼개서 첨부" : "9개로 쪼개서 보내기"),
       h("button", {type: "button", className: "dccon-buffer-merge", disabled: busy || !this.state.mergeReady,
         title: this.state.mergeReason || "선택 순서대로 가로로 이어붙입니다. 원본 크기와 애니메이션을 유지합니다.",
-        onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, BdApi.Composer?.attachFiles ? "합쳐서 첨부" : "합쳐서 전송"),
+        onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, platform.composer?.attachFiles ? "합쳐서 첨부" : "합쳐서 전송"),
       this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason),
-      h("p", {className: "dccon-buffer-hint"}, BdApi.Composer?.attachFiles
+      h("p", {className: "dccon-buffer-hint"}, platform.composer?.attachFiles
         ? "일반 클릭은 콘을 하나 더 추가해 입력창에 첨부합니다. Discord에서 직접 전송하세요."
         : "예상 배치 · 기기마다 크기는 달라질 수 있어요. 일반 클릭은 콘을 하나 더 추가해 전송합니다."));
   }
 }
-class BufferImage extends BdApi.React.Component {
+class BufferImage extends platform.react.Component {
   constructor(props) { super(props); this.state = {url: null}; }
   componentDidMount() { this.setState({url: URL.createObjectURL(this.props.file)}); }
   componentDidUpdate(previous) {
@@ -1248,10 +1335,10 @@ class BufferImage extends BdApi.React.Component {
     }
   }
   componentWillUnmount() { if (this.state.url) URL.revokeObjectURL(this.state.url); }
-  render() { return this.state.url && BdApi.React.createElement("img", {src: this.state.url, alt: this.props.title, className: this.props.className}); }
+  render() { return this.state.url && platform.react.createElement("img", {src: this.state.url, alt: this.props.title, className: this.props.className}); }
 }
 
-class PersonalImage extends BdApi.React.Component {
+class PersonalImage extends platform.react.Component {
   constructor(props) { super(props); this.state = {file: null}; }
   componentDidMount() {
     getDCConImage(this.props.con).then(file => {
@@ -1259,10 +1346,10 @@ class PersonalImage extends BdApi.React.Component {
     }).catch(() => { if (!this.disposed) this.props.onError?.(); });
   }
   componentWillUnmount() { this.disposed = true; }
-  render() { return this.state.file && BdApi.React.createElement(BufferImage, {file: this.state.file, title: this.props.con.title, className: this.props.className}); }
+  render() { return this.state.file && platform.react.createElement(BufferImage, {file: this.state.file, title: this.props.con.title, className: this.props.className}); }
 }
 
-class PersonalConManager extends BdApi.React.Component {
+class PersonalConManager extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = {items: personalCons(), open: false, input: "", title: "", prepared: null, busy: false, message: ""};
@@ -1288,7 +1375,7 @@ class PersonalConManager extends BdApi.React.Component {
     return this.work(async signal => {
       let text;
       try {
-        try { text = await require("electron").clipboard.readText(); }
+        try { text = await platform.readClipboardText(); }
         catch { text = await navigator.clipboard.readText(); }
       } catch {
         if (!this.disposed) this.setState({message: "클립보드를 읽지 못했습니다. 이미지 링크를 직접 입력해 주세요."});
@@ -1311,7 +1398,7 @@ class PersonalConManager extends BdApi.React.Component {
     });
   }
   render() {
-    const h = BdApi.React.createElement, s = this.state;
+    const h = platform.react.createElement, s = this.state;
     return h("div", {className: "dccon-personal"},
       h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.open()}, "콘 추가"),
       s.open && h("form", {className: "dccon-personal-form", onSubmit: event => {event.preventDefault(); this.add();}},
@@ -1330,7 +1417,7 @@ class PersonalConManager extends BdApi.React.Component {
   }
 }
 
-class PackThumbnail extends BdApi.React.Component {
+class PackThumbnail extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = { index: 0 };
@@ -1340,14 +1427,14 @@ class PackThumbnail extends BdApi.React.Component {
     const { pack, className } = this.props;
     if (pack.info.package_idx === PERSONAL_PACK) {
       const con = pack.detail[0];
-      return con ? BdApi.React.createElement(PersonalImage, {key: con.path, con, className}) : null;
+      return con ? platform.react.createElement(PersonalImage, {key: con.path, con, className}) : null;
     }
     const paths = [...new Set([pack.info.main_img_path, pack.detail[0]?.path, pack.info.list_img_path].filter(Boolean))];
     if (!paths[this.state.index]) {
-      return BdApi.React.createElement("span", { className, "aria-hidden": true }, pack.info.title.slice(0, 1));
+      return platform.react.createElement("span", { className, "aria-hidden": true }, pack.info.title.slice(0, 1));
     }
     const next = () => this.setState(state => ({ index: state.index + 1 }));
-    return BdApi.React.createElement(DCConImage, {
+    return platform.react.createElement(DCConImage, {
       className, alt: "", src: DCConProxyURL + paths[this.state.index], loading: "lazy",
       onError: next,
       onLoad: event => { if (event.currentTarget.naturalWidth <= 1 || event.currentTarget.naturalHeight <= 1) next(); },
@@ -1356,7 +1443,7 @@ class PackThumbnail extends BdApi.React.Component {
 }
 
 // 카테고리 컴포넌트
-class DCConCategory extends BdApi.React.Component {
+class DCConCategory extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = {
@@ -1368,10 +1455,10 @@ class DCConCategory extends BdApi.React.Component {
     const { dccon } = this.props;
     const strings = getLocaleStrings();
 
-    return BdApi.React.createElement(
+    return platform.react.createElement(
       "div",
       { className: "dccon-category" },
-      BdApi.React.createElement(
+      platform.react.createElement(
         "button",
         {
           type: "button",
@@ -1389,26 +1476,26 @@ class DCConCategory extends BdApi.React.Component {
             this.setState({ expanded });
           },
         },
-        BdApi.React.createElement(PackThumbnail, {
+        platform.react.createElement(PackThumbnail, {
           pack: dccon,
           className: "dccon-category-icon",
         }),
-        BdApi.React.createElement(
+        platform.react.createElement(
           "div",
           { className: "dccon-category-name" },
           dccon.info.title
         ),
-        BdApi.React.createElement(
+        platform.react.createElement(
           "div",
           { className: "dccon-category-toggle" },
-          BdApi.React.createElement(
+          platform.react.createElement(
             "svg",
             {
               width: "24",
               height: "24",
               viewBox: "0 0 24 24",
             },
-            BdApi.React.createElement("path", {
+            platform.react.createElement("path", {
               fill: "currentColor",
               d: this.state.expanded
                 ? "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"
@@ -1418,11 +1505,11 @@ class DCConCategory extends BdApi.React.Component {
         )
       ),
       this.state.expanded &&
-        BdApi.React.createElement(
+        platform.react.createElement(
           "div",
           { className: "dccon-items" },
           dccon.detail.map((con) =>
-            BdApi.React.createElement(DCConItem, {
+            platform.react.createElement(DCConItem, {
               key: con.idx,
               con: con,
               packageIdx: dccon.info.package_idx,
@@ -1434,7 +1521,7 @@ class DCConCategory extends BdApi.React.Component {
 }
 
 // 디시콘 아이템 컴포넌트
-class DCConItem extends BdApi.React.Component {
+class DCConItem extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = { error: false, busy: false, favorite: loadData("favorites", []).some(con => con.path === props.con.path) };
@@ -1466,7 +1553,7 @@ class DCConItem extends BdApi.React.Component {
   }
 
   render() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     const { con } = this.props;
     return h("div", { className: "dccon-tile" },
       h("button", { type: "button", title: con.title + " · Shift+클릭: 이미지 모아두기",
@@ -1485,7 +1572,7 @@ class DCConItem extends BdApi.React.Component {
 }
 
 // 디시콘 패널 컴포넌트 업데이트
-class DCConPanel extends BdApi.React.Component {
+class DCConPanel extends platform.react.Component {
   constructor(props) {
     super(props);
     this.state = { textFilter: "", selected: "all", dccons: pickerPacks() };
@@ -1548,7 +1635,7 @@ class DCConPanel extends BdApi.React.Component {
 
   render() {
     if (this.props.type !== "dccon") return null;
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     const packs = this.filterDccons();
     const query = this.state.textFilter.trim().toLowerCase();
     const isFavorites = this.state.selected === "favorites";
@@ -1605,7 +1692,7 @@ class DCConPanel extends BdApi.React.Component {
                   !this.state.dccons.length && h("button", { type: "button", onClick: this.props.onManage }, "팩 추가하기"))
         )
       ),
-      h("div", { className: "dccon-footer" }, BdApi.Composer?.attachFiles
+      h("div", { className: "dccon-footer" }, platform.composer?.attachFiles
         ? "클릭: 입력창에 첨부 · Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
         : "클릭: 누적 콘과 함께 전송 · Shift+클릭: 모아두기 (최대 9개)")
     );
@@ -1618,7 +1705,7 @@ function loadData(key, defaultData) {
   defaultData = structuredClone(defaultData);
 
   // BetterDiscord can return the cached object. Never share it with React state.
-  const data = structuredClone(SharedConfig.data ? SharedConfig.data[key] : BdApi.Data.load("discord-dccon", key));
+  const data = structuredClone(SharedConfig.data ? SharedConfig.data[key] : platform.data.load(key));
   if (data == null) return defaultData;
 
   // 기본값 처리
@@ -1632,7 +1719,7 @@ function loadData(key, defaultData) {
 }
 
 function saveData(key, data) {
-  const result = SharedConfig.data ? SharedConfig.save(key, data) : BdApi.Data.save("discord-dccon", key, data);
+  const result = SharedConfig.data ? SharedConfig.save(key, data) : platform.data.save(key, data);
   if (["dccons", "personalCons"].includes(key) && Embedding.enabled()) void Embedding.index();
   return result;
 }
@@ -1654,7 +1741,7 @@ function loadPacks() {
 // 디시콘 검색 결과를 가져오는 함수
 const getDCConSearchResult = (query) => {
   return new Promise((resolve, reject) => {
-    BdApi.Net.fetch(
+    platform.net.fetch(
       encodeURI("https://dccon.dcinside.com/hot/1/title/" + query)
     )
       .then((r) => r.text())
@@ -1686,7 +1773,7 @@ const getDCConSearchResult = (query) => {
 
 // 버튼 컴포넌트
 const Button = (props) => {
-  return BdApi.React.createElement(
+  return platform.react.createElement(
     "button",
     {
       type: "button",
@@ -1700,7 +1787,7 @@ const Button = (props) => {
 };
 
 // 디시콘 카드 컴포넌트 (검색 결과용)
-class DCConCard extends BdApi.React.Component {
+class DCConCard extends platform.react.Component {
   constructor(props) {
     super(props);
 
@@ -1717,21 +1804,21 @@ class DCConCard extends BdApi.React.Component {
 
     const strings = getLocaleStrings();
 
-    return BdApi.React.createElement(
+    return platform.react.createElement(
       "div",
       {
         className: "dccon-card",
       },
-      BdApi.React.createElement(DCConImage, {
+      platform.react.createElement(DCConImage, {
         src: `${DCConProxyURL}${item.thumbId}`,
         style: { borderRadius: "8px" },
       }),
-      BdApi.React.createElement(
+      platform.react.createElement(
         "div",
         { className: "dccon-card-content" },
-        BdApi.React.createElement("h3", {}, item.name),
-        BdApi.React.createElement("span", {}, item.seller),
-        BdApi.React.createElement(Button, {
+        platform.react.createElement("h3", {}, item.name),
+        platform.react.createElement("span", {}, item.seller),
+        platform.react.createElement(Button, {
           text: existingDccon
             ? strings.settings.added
             : this.state.isAdding
@@ -1750,12 +1837,12 @@ class DCConCard extends BdApi.React.Component {
               warmCache(dcconData.detail);
 
               this.props.onAdd(dcconData);
-              BdApi.UI.showToast("디시콘이 추가되었습니다.", {
+              platform.ui.showToast("디시콘이 추가되었습니다.", {
                 type: "success",
               });
             } catch (err) {
-              BdApi.Logger.error("discord-dccon", "디시콘 추가 실패:", err);
-              BdApi.UI.showToast("디시콘 추가에 실패했습니다.", {
+              platform.logger.error("discord-dccon", "디시콘 추가 실패:", err);
+              platform.ui.showToast("디시콘 추가에 실패했습니다.", {
                 type: "error",
               });
             } finally {
@@ -1774,35 +1861,35 @@ class DCConCard extends BdApi.React.Component {
 }
 
 // 저장된 디시콘 카드 컴포넌트 (추가된 디시콘 관리용)
-class SavedDCConCard extends BdApi.React.Component {
+class SavedDCConCard extends platform.react.Component {
   render() {
     const { dccon } = this.props;
     const strings = getLocaleStrings();
 
-    return BdApi.React.createElement(
+    return platform.react.createElement(
       "div",
       {
         className: "dccon-card",
       },
-      BdApi.React.createElement(PackThumbnail, {
+      platform.react.createElement(PackThumbnail, {
         pack: dccon,
         style: { borderRadius: "8px" },
       }),
-      BdApi.React.createElement(
+      platform.react.createElement(
         "div",
         { className: "dccon-card-content" },
-        BdApi.React.createElement("h3", {}, dccon.info.title),
-        BdApi.React.createElement(
+        platform.react.createElement("h3", {}, dccon.info.title),
+        platform.react.createElement(
           "span",
           {},
           `${dccon.detail.length}개의 디시콘`
         ),
-        BdApi.React.createElement("div", {className: "dccon-pack-actions"},
-        BdApi.React.createElement("div", {className: "dccon-pack-order", role: "group", "aria-label": dccon.info.title + " 순서 조절"},
+        platform.react.createElement("div", {className: "dccon-pack-actions"},
+        platform.react.createElement("div", {className: "dccon-pack-order", role: "group", "aria-label": dccon.info.title + " 순서 조절"},
           ...[[-1, "위로", this.props.isFirst], [1, "아래로", this.props.isLast]].map(([direction, label, disabled]) =>
-            BdApi.React.createElement("button", {key: direction, type: "button", disabled,
+            platform.react.createElement("button", {key: direction, type: "button", disabled,
               "aria-label": dccon.info.title + " " + label, onClick: () => this.props.onMove(direction)}, label))),
-        BdApi.React.createElement(Button, {
+        platform.react.createElement(Button, {
           text: strings.settings.remove,
           color: "dccon-item-error",
           onClick: () => {
@@ -1812,7 +1899,7 @@ class SavedDCConCard extends BdApi.React.Component {
             );
             saveData("dccons", newDccons);
             this.props.onRemove(dccon.info.package_idx);
-            BdApi.UI.showToast("디시콘이 제거되었습니다.", { type: "success" });
+            platform.ui.showToast("디시콘이 제거되었습니다.", { type: "success" });
           },
           style: {
             marginLeft: "auto",
@@ -1824,31 +1911,12 @@ class SavedDCConCard extends BdApi.React.Component {
 }
 
 function inspectInstantSend() {
-  if (BdApi.Composer?.attachFiles) return {
+  if (platform.composer?.attachFiles) return {
     mode: "입력창 첨부 · 직접 전송",
-    composerAvailable: BdApi.Composer.available?.() ?? null,
+    composerAvailable: platform.composer.available?.() ?? null,
     lastSendAttempt: lastSendAttempt ? structuredClone(lastSendAttempt) : "아직 첨부 시도 없음",
   };
-  const { Webpack } = BdApi;
-  const report = {};
-  const check = (name, inspect) => {
-    try { report[name] = inspect(); }
-    catch (error) { report[name] = `Lookup failed: ${error.message}`; }
-  };
-  check("CloudUpload", () => Boolean(Webpack.getModule(
-    value => typeof value === "function" &&
-      typeof value.prototype?.trackUploadFinished === "function" &&
-      typeof value.prototype?.upload === "function",
-    { searchExports: true }
-  )));
-  check("REST post/get/put/del", () => Boolean(Webpack.getModule(
-    isDiscordRest,
-    { searchExports: true }
-  )));
-  check("MessageActions.sendMessage", () => Boolean(Webpack.getByKeys("sendMessage")));
-  for (const name of ["DraftStore", "UploadAttachmentStore", "PendingReplyStore", "SelectedChannelStore"]) {
-    check(name, () => Boolean(Webpack.getStore?.(name)));
-  }
+  const report = platform.discord.inspect();
   report.lastSendAttempt = lastSendAttempt ? structuredClone(lastSendAttempt) : "아직 전송 시도 없음";
   return report;
 }
@@ -1981,7 +2049,7 @@ const Embedding = {
   directory() {return cachePath("models");},
   vectorDirectory() {return cachePath("vectors", EMBEDDING_SPEC);},
   vectorFile(key) {
-    return require("path").join(this.vectorDirectory(), require("crypto").createHash("sha256").update(key).digest("hex") + ".json");
+    return platform.paths.join(this.vectorDirectory(), platform.sha256(key) + ".json");
   },
   async download(url, generation) {
     // BetterDiscord's automatic redirect handler cannot resolve relative Location headers.
@@ -1990,7 +2058,7 @@ const Embedding = {
       const controller = new AbortController();
       this.downloads.add(controller);
       let response;
-      try {response = await BdApi.Net.fetch(url, {responseType: "arraybuffer", redirect: "manual", signal: controller.signal});}
+      try {response = await platform.net.fetch(url, {responseType: "arraybuffer", redirect: "manual", signal: controller.signal});}
       finally {this.downloads.delete(controller);}
       if (![301, 302, 303, 307, 308].includes(response.status)) return response;
       const location = response.headers?.get?.("location");
@@ -2009,8 +2077,8 @@ const Embedding = {
     try {return await request;} finally {this.assetRequests.delete(key);}
   },
   async readAsset(url, generation, expectedHash) {
-    const fs = this.files(), hash = bytes => require("crypto").createHash("sha256").update(bytes).digest("hex");
-    const file = require("path").join(this.directory(), hash(url));
+    const fs = this.files(), hash = bytes => platform.sha256(bytes);
+    const file = platform.paths.join(this.directory(), hash(url));
     let bytes;
     try {bytes = await readCacheFile("models", hash(url), fs);} catch { /* Download on cache miss. */ }
     if (!bytes || typeof bytes === "string" || (expectedHash && hash(bytes) !== expectedHash)) {
@@ -2182,7 +2250,7 @@ const Embedding = {
       if (generation === this.generation) this.update({phase: this.status.errors ? "완료 · 일부 실패" : "준비 완료"});
     } catch (error) {
       if (generation === this.generation) {
-        try {await checkpoint();} catch (saveError) {BdApi.Logger.error("discord-dccon", "Embedding checkpoint failed", saveError);}
+        try {await checkpoint();} catch (saveError) {platform.logger.error("discord-dccon", "Embedding checkpoint failed", saveError);}
         if (generation !== this.generation) return;
         this.update({phase: "오류", error: String(error.message)});
       }
@@ -2214,12 +2282,12 @@ const Embedding = {
   },
 };
 
-class EmbeddingEnvironmentPanel extends BdApi.React.Component {
+class EmbeddingEnvironmentPanel extends platform.react.Component {
   constructor(props) { super(props); this.state = {}; this.refresh = () => this.setState({revision: (this.state.revision || 0) + 1}); }
   componentDidMount() { PluginEvents.subscribe("DCCON_EMBEDDING_UPDATE", this.refresh); }
   componentWillUnmount() { PluginEvents.unsubscribe("DCCON_EMBEDDING_UPDATE", this.refresh); }
   render() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     return h("section", {className: "dccon-embedding-environment"},
       h("h3", null, "디시콘 임베딩"),
       h("label", null, h("input", {type: "checkbox", checked: Embedding.enabled(), onChange: e => Embedding.toggle(e.target.checked)}), " 의미 기반 검색 활성화"),
@@ -2234,7 +2302,7 @@ class EmbeddingEnvironmentPanel extends BdApi.React.Component {
 }
 
 // 설정 패널 컴포넌트
-class DCConSettingsPanel extends BdApi.React.Component {
+class DCConSettingsPanel extends platform.react.Component {
   constructor(props) {
     super(props);
 
@@ -2259,8 +2327,8 @@ class DCConSettingsPanel extends BdApi.React.Component {
       const results = await getDCConSearchResult(this.state.searchQuery);
       this.setState({ searchResults: results });
     } catch (err) {
-      BdApi.Logger.error("discord-dccon", "디시콘 검색 실패:", err);
-      BdApi.UI.showToast("디시콘 검색에 실패했습니다.", { type: "error" });
+      platform.logger.error("discord-dccon", "디시콘 검색 실패:", err);
+      platform.ui.showToast("디시콘 검색에 실패했습니다.", { type: "error" });
     }
 
     this.setState({ isSearching: false });
@@ -2273,13 +2341,13 @@ class DCConSettingsPanel extends BdApi.React.Component {
   renderSearch() {
     const strings = getLocaleStrings();
 
-    return BdApi.React.createElement(
+    return platform.react.createElement(
       "div",
       { className: "dccon-search-container" },
-      BdApi.React.createElement(
+      platform.react.createElement(
         "div",
         { className: "dccon-search-bar" },
-        BdApi.React.createElement("input", {
+        platform.react.createElement("input", {
           type: "text",
           placeholder: strings.settings.searchDccon,
           value: this.state.searchQuery,
@@ -2288,7 +2356,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
             if (e.key === "Enter") this.handleSearch();
           },
         }),
-        BdApi.React.createElement(Button, {
+        platform.react.createElement(Button, {
           text: this.state.isSearching ? "검색 중…" : "검색",
           disabled:
             this.state.isSearching || this.state.searchQuery.trim() === "",
@@ -2296,12 +2364,12 @@ class DCConSettingsPanel extends BdApi.React.Component {
           style: { marginLeft: "8px" },
         })
       ),
-      BdApi.React.createElement(
+      platform.react.createElement(
         "div",
         { className: "dccon-search-results" },
         this.state.searchResults.length > 0
           ? this.state.searchResults.map((result) =>
-              BdApi.React.createElement(DCConCard, {
+              platform.react.createElement(DCConCard, {
                 key: result.idx,
                 item: result,
                 savedDccons: this.state.savedDccons,
@@ -2311,7 +2379,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
               })
             )
           : this.state.searchQuery !== "" && !this.state.isSearching
-          ? BdApi.React.createElement(
+          ? platform.react.createElement(
               "div",
               { className: "dccon-empty-state" },
               strings.settings.noResults
@@ -2322,7 +2390,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
   }
 
   renderDiagnostics() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     return h("div", { className: "dccon-diagnostics" },
       h("h3", null, "문제 해결 · 버그 제보"),
       h("p", null, "디시콘이 보내지지 않거나 오류가 발생했나요? 문제가 발생한 직후 진단 정보를 만들어 제보에 첨부해 주세요."),
@@ -2358,12 +2426,12 @@ class DCConSettingsPanel extends BdApi.React.Component {
   renderSaved() {
     const strings = getLocaleStrings();
 
-    return BdApi.React.createElement(
+    return platform.react.createElement(
       "div",
       { className: "dccon-saved-container" },
       this.state.savedDccons.length > 0
         ? this.state.savedDccons.map((dccon, index) =>
-            BdApi.React.createElement(SavedDCConCard, {
+            platform.react.createElement(SavedDCConCard, {
               key: dccon.info.package_idx,
               dccon: dccon,
               isFirst: index === 0,
@@ -2382,7 +2450,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
               },
             })
           )
-        : BdApi.React.createElement(
+        : platform.react.createElement(
             "div",
             { className: "dccon-empty-state" },
             "추가된 디시콘이 없습니다. '디시콘샵' 탭에서 디시콘을 추가해보세요."
@@ -2391,7 +2459,7 @@ class DCConSettingsPanel extends BdApi.React.Component {
   }
 
   render() {
-    const h = BdApi.React.createElement;
+    const h = platform.react.createElement;
     if (this.props.section === "settings") {
       return h("div", {className: "dccon-settings-panel dccon-user-settings"},
         h(EmbeddingEnvironmentPanel), this.renderDiagnostics());
@@ -2417,27 +2485,27 @@ module.exports = class DCCon {
   }
 
   getSettingsPanel() {
-    if (BdApi.Plugins?.folder && !SharedConfig.data)
-      return BdApi.React.createElement("div", null, this.startError ? "설정 읽기 실패: " + this.startError.message : "공통 설정을 불러오는 중입니다.");
-    return BdApi.React.createElement(DCConSettingsPanel, {section: "settings"});
+    if (platform.cacheAvailable() && !SharedConfig.data)
+      return platform.react.createElement("div", null, this.startError ? "설정 읽기 실패: " + this.startError.message : "공통 설정을 불러오는 중입니다.");
+    return platform.react.createElement(DCConSettingsPanel, {section: "settings"});
   }
 
   start() {
     const generation = ++this.startGeneration;
     this.startError = null;
-    if (!BdApi.Config && (typeof require !== "function" || !BdApi.Plugins?.folder)) return this.startReady();
+    if (!platform.config && !platform.cacheAvailable()) return this.startReady();
     this.startPromise = (async () => {
       try {await SharedConfig.open();}
       catch (error) {
         this.startError = error;
-        BdApi.Logger.error("discord-dccon", "Configuration migration failed", error);
-        BdApi.UI.showToast("설정 이전 실패: " + error.message + " · 다음 시작에 재시도합니다.", {type: "error", timeout: 10000});
+        platform.logger.error("discord-dccon", "Configuration migration failed", error);
+        platform.ui.showToast("설정 이전 실패: " + error.message + " · 다음 시작에 재시도합니다.", {type: "error", timeout: 10000});
         return;
       }
       if (generation === this.startGeneration) this.startReady();
     })().catch(error => {
-      BdApi.Logger.error("discord-dccon", "Plugin startup failed", error);
-      BdApi.UI.showToast("디시콘 시작 실패: " + error.message, {type: "error", timeout: 10000});
+      platform.logger.error("discord-dccon", "Plugin startup failed", error);
+      platform.ui.showToast("디시콘 시작 실패: " + error.message, {type: "error", timeout: 10000});
     });
     return this.startPromise;
   }
@@ -2468,7 +2536,7 @@ module.exports = class DCCon {
     this.unmountToolbar = mountToolbar(DCConButton);
 
 
-    BdApi.DOM.addStyle(this.meta.name, this.css);
+    platform.styles.add(this.meta.name, this.css);
 
     // 언어 변경 리스너 추가
     this.localeListener = () => {this.strings = getLocaleStrings();};
@@ -2487,7 +2555,7 @@ module.exports = class DCCon {
     this.unmountToolbar?.();
     this.unmountToolbar = null;
     PluginEvents.dispatch({ type: "DCCON_UNPATCH_ALL" });
-    BdApi.DOM.removeStyle(this.meta.name);
+    platform.styles.remove(this.meta.name);
   }
 
   get css() {

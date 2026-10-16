@@ -66,11 +66,11 @@ test('remote thumbnails render without a React hook dispatcher and release stale
   const pending = [], revoked = [];
   const context = {module:{exports:{}}, AbortController,
     URL:{createObjectURL: value => 'blob:' + value, revokeObjectURL: value => revoked.push(value)},
-    BdApi:{React:{
+    platform:{react:{
       Component:class {constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},
       createElement:(type,props)=>({type,props}),
       useState(){throw Error('No dispatcher');}, useEffect(){throw Error('No dispatcher');},
-    },Net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({src,signal,resolve}))}},
+    },net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({src,signal,resolve}))}},
   };
   vm.runInNewContext(source.slice(source.indexOf('class DCConImage'), source.indexOf('const ManduIcon')) + '\nmodule.exports=DCConImage;', context);
   const Image = context.module.exports, image = new Image({src:'first',loading:'lazy'});

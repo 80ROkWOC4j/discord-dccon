@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {JSDOM} = require('jsdom');
 const React = require('react');
-const {createAdapter} = require('../shelter/adapter');
+const {createShelterPlatform} = require('../platform/shelter.ts');
 
 for (const installation of ['BetterDiscord', 'shelter']) test(`${installation}: shared toolbar follows composers and channels, opens picker, and cleans up on stop`, async () => {
   const dom = new JSDOM('<!doctype html><body></body>');
@@ -32,14 +32,14 @@ for (const installation of ['BetterDiscord', 'shelter']) test(`${installation}: 
     DOM: {addStyle: (_, css) => {removeCss = injectCss(css);}, removeStyle: () => removeCss?.()}};
   const shelter = {React, ReactDOM, ReactDOMClient: {createRoot}, util: {getFiber: editor => fibers.get(editor)},
     flux: {storesFlat: {SelectedChannelStore: store}}, plugin: {store: {}, flushStore() {}}, ui: {injectCss}};
-  const adapter = installation === 'shelter' ? createAdapter(shelter, {config: async (method, args) => {
+  const adapter = installation === 'shelter' ? createShelterPlatform(shelter, {config: async (method, args) => {
     if (method === 'save') data[args[0]] = args[1];
     return {version: 2, settings: structuredClone(data)};
   }}, webpack) : null;
   const exported = {exports: {}};
   const source = fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
   vm.runInNewContext(source + '\nmodule.exports={Plugin:module.exports,getChannel:()=>currentChannelId};', {
-    module: exported, BdApi: adapter?.BdApi || nativeApi, window, document, MutationObserver,
+    module: exported, BdApi: nativeApi, DCConPlatform: adapter?.platform, window, document, MutationObserver,
     structuredClone, queueMicrotask, setTimeout, clearTimeout,
   });
   const plugin = new exported.exports.Plugin({name: 'discord-dccon'});

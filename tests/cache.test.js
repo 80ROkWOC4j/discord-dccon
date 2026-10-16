@@ -21,7 +21,7 @@ function runtime(folder, cacheFolder, data = {}, extra = {}) {
     } }, React: { Component: class {
     } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }
   };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../discord-dccon.plugin.js"), "utf8") + "\nmodule.exports={appDataDirectory,cachePath,readCacheFile,writeCacheFile,SharedConfig,getDCConImage,Embedding,WebPCache,loadData,saveData,setImageLoader:value=>{getDCConImage=value;}};", context);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../discord-dccon.plugin.js"), "utf8") + "\nmodule.exports={appDataDirectory:(os,env,home)=>DCConPlatformAdapters.appDataDirectory(os,env,home,platform.paths.join),cachePath,readCacheFile,writeCacheFile,SharedConfig,getDCConImage,Embedding,WebPCache,loadData,saveData,setImageLoader:value=>{getDCConImage=value;}};", context);
   return { ...context.module.exports, context };
 }
 function fixture(t) {

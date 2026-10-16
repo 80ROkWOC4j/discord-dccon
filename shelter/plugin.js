@@ -37,10 +37,9 @@
         }, 0);
         return;
       }
-      adapter = createAdapter(shelter, DCConNative, dcconWebpack);
+      adapter = createShelterPlatform(shelter, DCConNative, dcconWebpack);
       const exported = {exports: {}};
-      new Function('BdApi', 'require', 'module', dcconSource)(
-        adapter.BdApi, adapter.requireNative, exported);
+      new Function('DCConPlatform', 'module', dcconSource)(adapter.platform, exported);
       plugin = new exported.exports({name: 'discord-dccon', version: dcconVersion});
       await plugin.start();
     } catch (error) {

@@ -18,7 +18,7 @@ test('mobile Discord textarea mounts the toolbar and receives files without chan
  const bridge=createComposerBridge(page,document),rendered=[];
  const source=fs.readFileSync(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
  const context={module:{exports:{}},document,MutationObserver:window.MutationObserver,queueMicrotask,
-  BdApi:{Composer:bridge,Webpack:{getStore:()=>null},React:{createElement:(_,props)=>props},ReactDOM:{createRoot:()=>({render:props=>rendered.push(props),unmount(){}})}}};
+  platform:{composer:bridge,discord:{selectedChannelStore:()=>null},react:{createElement:(_,props)=>props},reactDOM:{createRoot:()=>({render:props=>rendered.push(props),unmount(){}})}}};
  vm.runInNewContext(source.slice(source.indexOf('function mountToolbar'),source.indexOf('// 다국어 처리를'))+'\nmodule.exports=mountToolbar;',context);
  const stop=context.module.exports(()=>{});
  try{

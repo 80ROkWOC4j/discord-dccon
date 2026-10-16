@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const vm = require('node:vm');
 const {execFileSync} = require('node:child_process');
+const {bundlePlatform, coreSource} = require('../scripts/platform-build.cjs');
 const output = path.resolve(__dirname, '../artifacts/shelter');
 async function main() {
   require('../scripts/build-split-worker.cjs');
@@ -14,13 +15,14 @@ async function main() {
   new vm.Script(shelter);
   const read = name => fs.readFile(path.join(__dirname, name), 'utf8');
   const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
+  const core = coreSource(source);
   const version = JSON.parse(await fs.readFile(path.resolve(__dirname, '../package.json'), 'utf8')).version;
-  const plugin = `(function(){\n${await read('adapter.js')}\nconst dcconSource=${JSON.stringify(source)}, dcconVersion=${JSON.stringify(version)};\nreturn (\n${await read('plugin.js')}\n);\n})()`;
+  const plugin = `(function(){\n${bundlePlatform('shelter')}\nconst createShelterPlatform=DCConPlatformAdapters.createShelterPlatform;\nconst dcconSource=${JSON.stringify(core)}, dcconVersion=${JSON.stringify(version)};\nreturn (\n${await read('plugin.js')}\n);\n})()`;
   const lifecycle = new Function('shelter', 'return ' + plugin)({});
   if (typeof lifecycle?.onLoad !== 'function' || typeof lifecycle?.onUnload !== 'function') {
     throw Error('Generated shelter plugin has no lifecycle');
   }
-  // The shared plugin source receives a local compatibility object, never a global BdApi.
+  // The shared plugin source receives its platform API without modifying globals.
   const bootstrap = `(() => {\n${await read('webpack.js')}\nconst dcconWebpack=captureWebpack(globalThis,DCConNative.hostMod==='vencord'?()=>globalThis.Vencord?.Webpack?.wreq:undefined);\n` +
     // The plugin ID also namespaces shelter storage.
     `const SHELTER_INJECTOR_PLUGINS={'discord-dccon':{js:${JSON.stringify(plugin)},local:true,update:false,` +

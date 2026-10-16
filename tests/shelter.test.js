@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const {captureWebpack, findWebpackRequire} = require('../shelter/webpack');
-const {createAdapter} = require('../shelter/adapter');
+const {createShelterPlatform} = require('../platform/shelter.ts');
 const {createFiles, resolveFile, allowedDownload, hash, prepareDataRoot, channelOptions} = require('../shelter/native');
 
 test('shelter module capture survives webpack push replacement and observes reassigned exports', () => {
@@ -79,9 +79,8 @@ test('upload lookup skips CSS and initializes only matching lazy factories', () 
   }]);
   load(1);
   const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
-  const {BdApi} = createAdapter(shelter, {initialData: {}}, webpack);
-  const upload = BdApi.Webpack.getModule(value => typeof value === 'function' &&
-    typeof value.prototype?.trackUploadFinished === 'function' && typeof value.prototype?.upload === 'function');
+  const {platform} = createShelterPlatform(shelter, {initialData: {}}, webpack);
+  const upload = platform.discord.uploadModule();
   assert.equal(typeof upload, 'function');
   assert.equal(cache[4], undefined);
 });
@@ -109,11 +108,11 @@ test('shelter imports its legacy snapshot through common JSON and never updates 
   const shelter = {plugin: {store, flushStore() {}}, flux: {storesFlat: {}}};
   const calls = [];
   const native = {config: async (method, args) => {calls.push({method,args}); return {version:2,settings:args[0]};}};
-  const {BdApi} = createAdapter(shelter, native, {});
-  const imported = await BdApi.Config.open(), packs = imported.settings.dccons;
+  const {platform} = createShelterPlatform(shelter, native, {});
+  const imported = await platform.config.open(), packs = imported.settings.dccons;
   packs[0].info.title = 'changed';
-  assert.equal(BdApi.Data.load('discord-dccon', 'dccons')[0].info.title, 'original');
-  await BdApi.Config.save('dccons', packs, []);
+  assert.equal(platform.data.load('dccons')[0].info.title, 'original');
+  await platform.config.save('dccons', packs, []);
   assert.equal(calls[1].method, 'save');
   assert.equal(store.dcconData.dccons[0].info.title, 'original');
 });
@@ -137,11 +136,11 @@ test('image sends use shelter Discord REST, never an ambiguous HTTP export', asy
     getModule: filter => [wrong, CloudUpload].find(value => filter(value)),
     getModuleBySource: filter => [wrong, CloudUpload].find(value => filter(value))};
   const shelter = {http: {_raw: rest}, React: {Component: class {}}, plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
-  const adapter = createAdapter(shelter, {initialData: {}}, webpack);
+  const adapter = createShelterPlatform(shelter, {initialData: {}}, webpack);
   const module = {exports: {}};
   const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
   vm.runInNewContext(source + '\nmodule.exports={sendImagesDirectly};', {
-    module, BdApi: adapter.BdApi, structuredClone, setTimeout, clearTimeout,
+    module, DCConPlatform: adapter.platform, structuredClone, setTimeout, clearTimeout,
   });
   const imageAttempt = {};
   await module.exports.sendImagesDirectly([{name: 'dccon.png', size: 3}], 'channel-test', imageAttempt);
@@ -156,14 +155,14 @@ test('adapter disposal aborts old downloads without reusing IDs after restart', 
   const requests = [], aborted = [];
   const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
   const native = {initialData: {}, abort: id => aborted.push(id), fetch: id => new Promise(resolve => requests.push({id, resolve}))};
-  const first = createAdapter(shelter, native, {});
-  const oldRequest = first.BdApi.Net.fetch('https://dcinside.com/old');
+  const first = createShelterPlatform(shelter, native, {});
+  const oldRequest = first.platform.net.fetch('https://dcinside.com/old');
   first.dispose();
-  const second = createAdapter(shelter, native, {});
-  const newRequest = second.BdApi.Net.fetch('https://dcinside.com/new');
+  const second = createShelterPlatform(shelter, native, {});
+  const newRequest = second.platform.net.fetch('https://dcinside.com/new');
   assert.notEqual(requests[0].id, requests[1].id);
   assert.deepEqual(aborted, [requests[0].id]);
-  await assert.rejects(first.BdApi.Net.fetch('https://dcinside.com/stopped'), {name: 'AbortError'});
+  await assert.rejects(first.platform.net.fetch('https://dcinside.com/stopped'), {name: 'AbortError'});
   for (const request of requests) request.resolve({status: 200, headers: [], bytes: []});
   await Promise.all([oldRequest, newRequest]);
   second.dispose();
@@ -217,8 +216,8 @@ test('plugin starts after first-store retry without PoC status APIs and cleans u
     console, dcconVersion: '3.0.0', DCConNative: {},
     dcconWebpack: {getByKeys: () => ({})},
     setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {},
-    createAdapter: () => ({BdApi: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
-    dcconSource: 'module.exports=class {start(){BdApi.mount();} stop(){BdApi.unmount();}};',
+    createShelterPlatform: () => ({platform: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
+    dcconSource: 'module.exports=class {start(){DCConPlatform.mount();} stop(){DCConPlatform.unmount();}};',
     shelter: {React: {createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
       http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
       plugin: {id: 'discord-dccon', flushStore() {
@@ -318,8 +317,8 @@ test('preload injects only the configured channel main frame and always loads or
     assert.deepEqual(calls, allowed ? ['bridge', 'injected', 'original'] : ['original']);
     assert.equal(reads, 0);
     if (allowed) {
-      const {requireNative} = createAdapter({plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}}, {...bridge, initialData: {}}, {});
-      assert.equal(requireNative('electron').clipboard.readText(), 'clipboard-url');
+      const {platform} = createShelterPlatform({plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}}, {...bridge, initialData: {}}, {});
+      assert.equal(platform.readClipboardText(), 'clipboard-url');
       assert.equal(reads, 1);
     } else assert.equal(bridge, undefined);
   }
@@ -356,13 +355,13 @@ test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings cha
   const native = {hostMod: 'vencord', fetch: async (id, url, options) => {
     calls.push({url,options});return {status:200,headers:[['content-type','image/gif']],bytes:new Uint8Array([71,73,70])};
   }};
-  const adapter = createAdapter({plugin:{store:{}},ReactDOM:{}},native,{});
-  const blob = await adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123');
+  const adapter = createShelterPlatform({plugin:{store:{}},ReactDOM:{}},native,{});
+  const blob = await adapter.platform.net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123');
   assert.equal(calls[0].url,'https://dcimg5.dcinside.com/dccon.php?no=abc123');
   assert.equal(blob.type,'image/gif');
   assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())],[71,73,70]);
   const controller=new AbortController();controller.abort();
-  await assert.rejects(adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123',controller.signal),{name:'AbortError'});
+  await assert.rejects(adapter.platform.net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123',controller.signal),{name:'AbortError'});
   assert.equal(calls.length,1);
   adapter.dispose();
 });
@@ -371,8 +370,8 @@ test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native 
   const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
   const pending=[],revoked=[];
   const context={module:{exports:{}},AbortController,URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
-    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
-      Net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
+    platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
   vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
   const Image=context.module.exports,image=new Image({src:'first',loading:'lazy'});
   image.componentDidMount();pending[0].resolve('first');await Promise.resolve();
@@ -381,7 +380,7 @@ test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native 
   assert.equal(pending[0].signal.aborted,true);assert.deepEqual(revoked,['blob:first']);
   image.componentWillUnmount();pending[1].resolve('second');await Promise.resolve();
   assert.equal(image.state.source,undefined);assert.equal(pending[1].signal.aborted,true);
-  delete context.BdApi.Net.resolveImage;
+  delete context.platform.net.resolveImage;
   const direct=new Image({src:'original',loading:'lazy'});direct.componentDidMount();
   assert.equal(direct.render().props.src,'original');assert.equal(direct.render().props.loading,'lazy');
 });
@@ -397,8 +396,8 @@ test('Blob thumbnails wait for intersection and ignore stale visibility callback
       notify(isIntersecting){this.callback([{target:this.target,isIntersecting}]);}
     },
     URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
-    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
-      Net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
+    platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
   };
   vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
   const Image=context.module.exports, scrollRoot={};

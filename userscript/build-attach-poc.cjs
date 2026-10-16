@@ -5,13 +5,17 @@ const {version} = require('../package.json');
 const root = path.resolve(__dirname, '..');
 async function main() {
   require('../scripts/build-split-worker.cjs');
-  const result = await build({absWorkingDir: root, stdin: {contents: `const {start}=require('./userscript/attach-poc');
+  const result = await build({absWorkingDir: root, tsconfigRaw: {}, stdin: {contents: `const {start}=require('./userscript/attach-poc');
 const boot=()=>start({page:unsafeWindow,request:GM_xmlhttpRequest,load:GM_getValue});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();`, resolveDir: root},
     bundle: true, write: false, format: 'iife', platform: 'browser',
     define: {'process.env.NODE_ENV': '"production"'},
     plugins: [{name: 'shared-plugin-text', setup(builder) {
-      builder.onLoad({filter: /(?:discord-dccon\.plugin\.js|shared-storage\.cjs)$/}, async args => ({contents: await fs.readFile(args.path, 'utf8'), loader: 'text'}));
+      builder.onLoad({filter: /(?:discord-dccon\.plugin\.js|shared-storage\.cjs)$/}, async args => {
+        const source = await fs.readFile(args.path, 'utf8');
+        return {contents: args.path.endsWith('discord-dccon.plugin.js')
+          ? require('../scripts/platform-build.cjs').coreSource(source) : source, loader: 'text'};
+      });
     }}]});
   const metadata = `// ==UserScript==
 // @name discord-dccon Attach PoC

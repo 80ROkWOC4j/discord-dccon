@@ -2,8 +2,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {buildSync} = require('esbuild');
 const root = path.resolve(__dirname, '..');
+// Type-check settings must not change the existing JavaScript worker emission.
 const result = buildSync({
-  absWorkingDir: root, entryPoints: ['scripts/split-worker.js'], bundle: true, write: false,
+  absWorkingDir: root, tsconfigRaw: {}, entryPoints: ['scripts/split-worker.js'], bundle: true, write: false,
   format: 'esm', platform: 'browser', minify: true, legalComments: 'inline',
   inject: ['scripts/split-buffer.js'], external: ['fs', 'path', 'util'],
   define: {window: 'globalThis'},
@@ -22,6 +23,14 @@ const migrationBlock = '// BEGIN GENERATED SHARED STORAGE\nconst SHARED_STORAGE_
 const migrationPattern = /\/\/ BEGIN GENERATED SHARED STORAGE[\s\S]*?\/\/ END GENERATED SHARED STORAGE/;
 updated = migrationPattern.test(updated) ? updated.replace(migrationPattern, () => migrationBlock)
   : updated.replace('// Pinned libwebp WASM tools.', migrationBlock + '\n\n// Pinned libwebp WASM tools.');
+const {bundlePlatform} = require('./platform-build.cjs');
+const platformBlock = '// BEGIN GENERATED PLATFORM\n' + bundlePlatform('betterdiscord') +
+  'const platform = typeof DCConPlatform !== "undefined" ? DCConPlatform\n' +
+  '  : DCConPlatformAdapters.createBetterDiscordPlatform(BdApi, typeof require === "function" ? require : undefined, () => SHARED_STORAGE_SOURCE);\n' +
+  '// END GENERATED PLATFORM';
+const platformPattern = /\/\/ BEGIN GENERATED PLATFORM[\s\S]*?\/\/ END GENERATED PLATFORM/;
+if (!platformPattern.test(updated)) throw Error('Missing platform insertion marker');
+updated = updated.replace(platformPattern, () => platformBlock);
 if (updated !== original) {
   // Installer tests build packages while other test processes read this file.
   const temporary = `${file}.${process.pid}.tmp`;
