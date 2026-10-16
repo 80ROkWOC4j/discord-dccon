@@ -43,11 +43,13 @@ test('picker adapts to available width without shrinking the grid when collectin
   for(const width of [320,360,390,430,590,600,1024]) {
     await page.setViewportSize({width,height:780});await page.evaluate(()=>setQueue(0));
     await page.waitForFunction(()=>!document.querySelector('.dccon-buffer'));
+    assert.notEqual(await page.locator('.dccon-footer').evaluate(e=>getComputedStyle(e).display),'none');
     const before=await geometry();assert.equal(before.compact,width<600);
     if(width<600)assert.equal(before.columns,4);
     for(const count of [1,3,9]) {
       await page.evaluate(n=>setQueue(n),count);await page.waitForFunction(n=>document.querySelector('.dccon-buffer')?.dataset.count===String(n),count);
       const g=await geometry();assert.equal(g.horizontalOverflow,false);assert.ok(g.popup.x>=0&&g.popup.right<=width);
+      assert.equal(await page.locator('.dccon-footer').evaluate(e=>getComputedStyle(e).display),'none');
       if(width<600){
         assert.equal(g.columns,4);assert.equal(g.grid.width,before.grid.width);
         assert.equal(g.railDirection,'row');assert.ok(g.tray.y>=g.main.bottom-1);assert.equal(g.thumb.width,52);assert.equal(g.thumb.height,52);

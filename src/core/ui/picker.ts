@@ -76,8 +76,8 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
           onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, platform.composer?.attachFiles ? "9개로 쪼개서 첨부" : "9개로 쪼개서 보내기"),
         h("button", {type: "button", className: "dccon-buffer-merge", disabled: busy || !this.state.mergeReady,
           title: this.state.mergeReason || "선택 순서대로 가로로 이어붙입니다. 원본 크기와 애니메이션을 유지합니다.",
-          onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, platform.composer?.attachFiles ? "합쳐서 첨부" : "합쳐서 전송"),
-        this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason),
+          onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, platform.composer?.attachFiles ? "합쳐서 첨부(3개 이하)" : "합쳐서 전송(3개 이하)"),
+        entries.length <= 3 && this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason),
         h("p", {className: "dccon-buffer-hint"}, platform.composer?.attachFiles
           ? "일반 클릭은 콘을 하나 더 추가해 입력창에 첨부합니다. Discord에서 직접 전송하세요."
           : "예상 배치 · 기기마다 크기는 달라질 수 있어요. 일반 클릭은 콘을 하나 더 추가해 전송합니다."));
@@ -370,7 +370,9 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
         h("div", { className: "dccon-browser" },
           h("nav", { className: "dccon-rail", "aria-label": "디시콘 팩" },
             navButton("all", "전체 디시콘", h(ManduIcon)),
-            navButton("recent", "최근 사용", "◷"),
+            navButton("recent", "최근 사용", h("svg", {viewBox: "0 0 24 24", width: 24, height: 24,
+              fill: "none", stroke: "currentColor", strokeWidth: 2, "aria-hidden": true},
+              h("circle", {cx: 12, cy: 12, r: 10}), h("path", {d: "M12 5v7h7"}))),
             navButton("favorites", "즐겨찾기", "★"),
             h("div", { className: "dccon-rail-divider" }),
             ...this.state.dccons.map(pack => navButton(String(pack.info.package_idx), pack.info.title,

@@ -24,9 +24,40 @@ export function webpWorker() {
         try {module = await (kind === "gif" ? lib.Gif2Webp : lib.Img2Webp)({locateFile: () => wasmURL});}
         finally {self.fetch = fetch; URL.revokeObjectURL(wasmURL);}
         if (compositeGif) {
-          // Chromium accepts out-of-bounds GIF rectangles and composites them on the logical screen.
-          const decoder = new ImageDecoder({data: bytes, type: "image/gif"});
+          // Firefox rejects later frames outside the logical screen. Expand only
+          // the decoder canvas, then crop composited frames to the visible size.
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          let width = view.getUint16(6, true), height = view.getUint16(8, true);
+          const paletteSize = (flags: number) => flags & 128 ? 3 * (1 << ((flags & 7) + 1)) : 0;
+          let offset = 13 + paletteSize(bytes[10]);
+          const skipBlocks = () => {
+            while (offset < bytes.length && bytes[offset]) offset += 1 + bytes[offset];
+            if (offset >= bytes.length) throw Error("GIF 데이터가 잘렸습니다.");
+            offset++;
+          };
+          while (offset < bytes.length) {
+            const tag = bytes[offset++];
+            if (tag === 0x3b) break;
+            if (tag === 0x21) {offset++; skipBlocks();}
+            else if (tag === 0x2c) {
+              width = Math.max(width, view.getUint16(offset, true) + view.getUint16(offset + 4, true));
+              height = Math.max(height, view.getUint16(offset + 2, true) + view.getUint16(offset + 6, true));
+              offset += 9 + paletteSize(bytes[offset + 8]);
+              offset++; skipBlocks(); // LZW minimum code size, then image sub-blocks.
+            } else throw Error("GIF 블록이 올바르지 않습니다.");
+          }
+          let decoder = new ImageDecoder({data: bytes, type: "image/gif"});
           try {
+            const {image: first} = await decoder.decode({frameIndex: 0});
+            const visibleWidth = first.displayWidth, visibleHeight = first.displayHeight;
+            first.close();
+            if (width > visibleWidth || height > visibleHeight) {
+              if (width > 65535 || height > 65535) throw Error("GIF 프레임 범위가 너무 큽니다.");
+              const expanded = bytes.slice(), header = new DataView(expanded.buffer);
+              header.setUint16(6, width, true); header.setUint16(8, height, true);
+              decoder.close();
+              decoder = new ImageDecoder({data: expanded, type: "image/gif"});
+            }
             await decoder.tracks.ready;
             const track = decoder.tracks.selectedTrack!;
             loopCount = Number.isFinite(track.repetitionCount) ? track.repetitionCount + 1 : 0;
@@ -34,7 +65,7 @@ export function webpWorker() {
             for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
               const {image} = await decoder.decode({frameIndex});
               try {
-                const canvas = new OffscreenCanvas(image.displayWidth, image.displayHeight);
+                const canvas = new OffscreenCanvas(visibleWidth, visibleHeight);
                 canvas.getContext("2d")!.drawImage(image, 0, 0);
                 const png = await canvas.convertToBlob({type: "image/png"});
                 frames.push({bytes: new Uint8Array(await png.arrayBuffer()),

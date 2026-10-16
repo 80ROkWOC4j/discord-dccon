@@ -96,3 +96,48 @@ test('a rejected or partial native change rejects instead of acknowledging attac
  form.querySelector('input').addEventListener('change',()=>add(form,files[0].name));
  await assert.rejects(bridge.attachFiles(files,bridge.targetFor(editors[0])),/수락을 확인하지 못/);
 });
+
+test('mobile attachment suppresses Discord focus effects and restores the original method after acceptance',async()=>{
+ for(const own of [false,true]){
+  const {window,page,bridge,editors,files,add}=fixture(),editor=editors[0],form=editor.closest('form');
+  page.matchMedia=()=>({matches:true});editor.tabIndex=0;
+  if(own)Object.defineProperty(editor,'focus',{configurable:true,value:window.HTMLElement.prototype.focus.bind(editor)});
+  const before=Object.getOwnPropertyDescriptor(editor,'focus');
+  const button=window.document.createElement('button');window.document.body.append(button);button.focus();
+  form.querySelector('input').addEventListener('change',()=>{
+   // React attachment effects run before the MutationObserver acknowledges the new attachment.
+   queueMicrotask(()=>{for(const file of files)add(form,file.name);editor.focus();});
+  });
+  try{
+   await bridge.attachFiles(files,bridge.targetFor(editor));
+   assert.equal(window.document.activeElement,button);
+   assert.deepEqual(Object.getOwnPropertyDescriptor(editor,'focus'),before);
+   editor.focus();assert.equal(window.document.activeElement,editor);
+  }finally{bridge.dispose();window.close();}
+ }
+});
+
+test('mobile focus suppression ends on explicit editor interaction, timeout, disposal and dispatch failure',async()=>{
+ for(const scenario of ['pointer','timeout','dispose','dispatch']){
+  const {window,page,bridge,editors,files}=fixture(),editor=editors[0],input=editor.closest('form').querySelector('input');
+  page.matchMedia=()=>({matches:true});editor.tabIndex=0;const focus=editor.focus;
+  if(scenario==='dispatch')input.dispatchEvent=()=>{throw Error('dispatch failed');};
+  const promise=bridge.attachFiles(files,bridge.targetFor(editor));
+  const rejection=assert.rejects(promise,scenario==='dispose'?/종료/:scenario==='dispatch'?/dispatch failed/:/수락을 확인하지 못/);
+  if(scenario==='pointer'){
+   editor.dispatchEvent(new window.Event('pointerdown',{bubbles:true}));
+   assert.equal(editor.focus,focus);editor.focus();assert.equal(window.document.activeElement,editor);
+  }
+  if(scenario==='dispose')bridge.dispose();
+  await rejection;assert.equal(editor.focus,focus);assert.equal(Object.hasOwn(editor,'focus'),false);
+  bridge.dispose();window.close();
+ }
+});
+
+test('desktop attachment leaves Discord focus behavior intact',async()=>{
+ const {window,page,bridge,editors,files,add}=fixture(),editor=editors[0],form=editor.closest('form');
+ page.matchMedia=()=>({matches:false});editor.tabIndex=0;
+ form.querySelector('input').addEventListener('change',()=>{for(const file of files)add(form,file.name);editor.focus();});
+ try{await bridge.attachFiles(files,bridge.targetFor(editor));assert.equal(window.document.activeElement,editor);}
+ finally{bridge.dispose();window.close();}
+});

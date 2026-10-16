@@ -118,6 +118,7 @@
 .dccon-buffer-items button:focus-visible { outline: 2px solid var(--dc-accent, #5865f2); outline-offset: -2px; }
 .dccon-buffer-hint, .dccon-buffer-merge-reason { margin: 5px 0 0; color: var(--dc-muted); font-size: 11px; line-height: 1.4; }
 .dccon-footer { padding: 8px 12px; color: var(--dc-muted); font-size: 11px; border-top: 1px solid #80808033; }
+.dccon-popover-expanded .dccon-footer { display: none; }
 .dccon-empty-state { padding: 32px 16px; text-align: center; color: var(--dc-muted); grid-column: 1 / -1; }
 .dccon-empty-state button { display: block; margin: 16px auto 0; border-radius: 4px; padding: 8px 12px; background: var(--dc-accent); color: #fff; }
 .dccon-settings-panel { padding: 12px; }

@@ -5,7 +5,7 @@ function composerFor(editor) {
 }
 const attachmentSelector = '[data-list-item-id^="attachments___"]';
 function createComposerBridge(page, document) {
-  const bindings = new WeakMap(), targets = new Map();
+  const bindings = new WeakMap(), targets = new Map(), pending = new Set();
   let sequence = 0;
   function targetFor(editor) {
     for (const [id,target] of targets) if (!target.editor.isConnected || target.path !== page.location.pathname) targets.delete(id);
@@ -24,7 +24,7 @@ function createComposerBridge(page, document) {
     return target;
   }
   function attachFiles(files, id) {
-    const {form,input} = current(id);
+    const {form,input,editor} = current(id);
     const before = new Set([...form.querySelectorAll(attachmentSelector)].map(n=>n.getAttribute('data-list-item-id')));
     if (before.size + files.length > 10) throw Error('기존 첨부를 포함해 최대 10개까지 첨부할 수 있습니다. 모아둔 콘은 유지됩니다.');
     const transfer = new page.DataTransfer();
@@ -32,8 +32,12 @@ function createComposerBridge(page, document) {
     const expected = new Map();
     for (const file of files) expected.set(file.name,(expected.get(file.name)||0)+1);
     return new Promise((resolve,reject)=>{
-      let timer;
-      const finish = error => {observer.disconnect();page.clearTimeout(timer);error ? reject(error) : resolve();};
+      let timer, settled = false, restoreFocus = () => {};
+      const finish = error => {
+        if (settled) return;
+        settled = true; observer.disconnect();page.clearTimeout(timer);restoreFocus();pending.delete(finish);
+        error ? reject(error) : resolve();
+      };
       const check = () => {
         try {
           current(id);
@@ -47,12 +51,32 @@ function createComposerBridge(page, document) {
         } catch (error) {finish(error);}
       };
       const observer = new page.MutationObserver(check);
-      observer.observe(form,{childList:true,subtree:true,characterData:true});
-      timer = page.setTimeout(()=>finish(Error('Discord의 첨부 수락을 확인하지 못했습니다. 모아둔 콘을 유지했습니다. 입력창을 확인해 주세요.')),5000);
-      try {input.files=transfer.files;input.dispatchEvent(new page.Event('change',{bubbles:true}));check();}
+      pending.add(finish);
+      try {
+        if (page.matchMedia?.('(any-pointer: coarse)').matches) {
+          // Discord focuses the editor in its attachment render effects. Suppress
+          // only that editor until acceptance, without moving existing focus.
+          const previous = Object.getOwnPropertyDescriptor(editor,'focus'), ignore = () => {};
+          const onPointerDown = event => {if (editor.contains(event.target)) restoreFocus();};
+          restoreFocus = () => {
+            if (editor.focus === ignore) {
+              if (previous) Object.defineProperty(editor,'focus',previous); else delete editor.focus;
+            }
+            document.removeEventListener('pointerdown',onPointerDown,true);
+          };
+          Object.defineProperty(editor,'focus',{configurable:true,writable:true,value:ignore});
+          document.addEventListener('pointerdown',onPointerDown,true);
+        }
+        observer.observe(form,{childList:true,subtree:true,characterData:true});
+        timer = page.setTimeout(()=>finish(Error('Discord의 첨부 수락을 확인하지 못했습니다. 모아둔 콘을 유지했습니다. 입력창을 확인해 주세요.')),5000);
+        input.files=transfer.files;input.dispatchEvent(new page.Event('change',{bubbles:true}));check();
+      }
       catch (error) {finish(error);}
     });
   }
-  return {targetFor,attachFiles,available:()=>[...document.querySelectorAll('[role="textbox"][contenteditable="true"], [class*="channelTextArea"] textarea')].some(composerFor),dispose:()=>targets.clear()};
+  return {targetFor,attachFiles,available:()=>[...document.querySelectorAll('[role="textbox"][contenteditable="true"], [class*="channelTextArea"] textarea')].some(composerFor),dispose(){
+    for (const finish of pending) finish(Error('디시콘이 종료되어 첨부를 중단했습니다.'));
+    targets.clear();
+  }};
 }
 module.exports = {composerFor,createComposerBridge};

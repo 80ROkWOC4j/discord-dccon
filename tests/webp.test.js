@@ -217,13 +217,20 @@ test('GIF fallback preserves composited pixels, disposal, timing and finite loop
       const normalRequests = requests.slice();
       // Reuse both codec runtimes after the first fallback and after a successful GIF conversion.
       const repeated = await decode(await codec.convert(gif), 'image/webp');
-      return {before, after, repeated, normalRequests};
+      // Later frames below the canvas reproduce Firefox's "Error decoding frame".
+      const overflow = normal.slice();
+      overflow[122] = 2; // Third image descriptor: top offset, originally zero.
+      const overflowBefore = await decode(overflow, 'image/gif');
+      const overflowAfter = await decode(await codec.convert(overflow), 'image/webp');
+      return {before, after, repeated, normalRequests, overflowBefore, overflowAfter};
     } finally {codec.stop();}
   }, {methods: Object.fromEntries(['workerMain', 'convert', 'stop'].map(name => [name, codec[name].toString()])),
     isWebPSource: isWebP.toString(), assets});
   assert.deepEqual(result.after, result.before);
   assert.deepEqual(result.repeated, result.before);
   assert.deepEqual(result.normalRequests, ['gif']);
+  assert.deepEqual(result.overflowAfter, result.overflowBefore);
+  assert.ok(result.overflowAfter.frames.every(frame => frame.width === 3 && frame.height === 3));
   assert.equal(result.before.frames.length, 3);
   assert.deepEqual(result.before.frames.map(frame => frame.duration), [80000, 140000, 200000]);
 });
