@@ -13,18 +13,16 @@ async function main() {
     info: {package_idx: i + 1, title, list_img_path: sample(String(i + 1), '#b6baff'), main_img_path: sample(String(i + 1), '#b6baff')},
     detail: ['안녕', '고마워', '좋아요', '잘자', '최고', '응원'].map((text, j) => ({idx: i * 10 + j, title: text, path: sample(text, ['#b6baff', '#a6e4cf', '#f4cf97'][i])})),
   }));
-  const context = {module: {exports: {}}, structuredClone, BdApi: {
+  const context = {module: {exports: {}}, structuredClone, window: {matchMedia: () => ({matches: false})}, BdApi: {
     React, Data: {load: (_, key) => key === 'dccons' ? packs : []},
     Webpack: {getByKeys: () => ({locale: 'ko'}), getModule: () => ({}), Filters: {byKeys: () => () => true}},
   }};
-  let source = require('./helpers/core.cjs').coreSource();
-  source = source.replace(/const DCConProxyURL = .*?;/, 'const DCConProxyURL = "";');
-  vm.runInNewContext(source + '\nmodule.exports = {Plugin: module.exports, DCConPanel, DCConSettingsPanel};', context);
+  require('./helpers/core.cjs').loadCore(context);
   const {Plugin, DCConPanel, DCConSettingsPanel} = context.module.exports;
   const css = Object.getOwnPropertyDescriptor(Plugin.prototype, 'css').get.call({});
   const output = path.resolve(__dirname, '../artifacts/ui-previews');
   fs.mkdirSync(output, {recursive: true});
-  const browser = await chromium.launch({channel: 'chrome', headless: true});
+  const browser = await chromium.launch({...(process.env.WEBP_TEST_BROWSER ? {executablePath: process.env.WEBP_TEST_BROWSER} : {channel: 'chrome'}), headless: true});
   try {
     const page = await browser.newPage();
     for (const [name, width, theme, management] of [
@@ -33,7 +31,7 @@ async function main() {
       ['settings', 620, 'theme-dark', 'settings'], ['settings-narrow', 360, 'theme-dark', 'settings'],
     ]) {
       await page.setViewportSize({width, height: 630});
-      const markup = renderToStaticMarkup(React.createElement(management ? DCConSettingsPanel : DCConPanel, {type: 'dccon', section: management === 'settings' ? 'settings' : 'packs'}));
+      const markup = renderToStaticMarkup(React.createElement(management ? DCConSettingsPanel : DCConPanel, {type: 'dccon', section: management === 'settings' ? 'settings' : 'packs'})).replaceAll('https://dccon-proxy.minibox.workers.dev/?no=', '');
       await page.setContent(`<html class="${theme}"><meta charset="utf-8"><style>body {background:${theme === 'theme-dark' ? '#313338' : '#fff'}; margin:0} button,input {color:black; font:13px serif} ${css}</style><section class="dccon-popover" style="left:8px;top:16px;height:580px"><div class="dccon-popover-toolbar"><button aria-pressed="${!management}">내 디시콘</button><button aria-pressed="${management}">팩 추가 / 관리</button><button aria-pressed="${management === 'settings'}">설정</button><button>×</button></div><div class="dccon-popover-body">${markup}</div></section></html>`);
       await page.evaluate(async () => {
         await Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode(); }));

@@ -15,11 +15,9 @@ test('mobile Discord textarea mounts the toolbar and receives files without chan
  const page={Event:window.Event,File:window.File,MutationObserver:window.MutationObserver,location:window.location,setTimeout,clearTimeout,
   DataTransfer:class{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}};
  const bridge=createComposerBridge(page,document),rendered=[];
- const source=require('./helpers/core.cjs').coreSource();
  const context={module:{exports:{}},document,MutationObserver:window.MutationObserver,queueMicrotask,
   platform:{composer:bridge,discord:{selectedChannelStore:()=>null},react:{createElement:(_,props)=>props},reactDOM:{createRoot:()=>({render:props=>rendered.push(props),unmount(){}})}}};
- vm.runInNewContext(source.slice(source.indexOf('function mountToolbar'),source.indexOf('const translations ='))+'\nmodule.exports=mountToolbar;',context);
- const stop=context.module.exports(()=>{});
+ const stop=require('./helpers/core.cjs').importCore(context).mountToolbar(context.platform,()=>{});
  try{
   assert.equal(document.querySelectorAll('.dccon-toolbar-host').length,1);assert.equal(bridge.available(),true);
   assert.equal(rendered[0].channelId,bridge.targetFor(editor));

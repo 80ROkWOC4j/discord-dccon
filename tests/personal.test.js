@@ -24,8 +24,8 @@ function harness(t, options = {}) {
       Webpack: {getByKeys: () => ({}), getStore: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}},
       React: {Component: class {constructor(props) {this.props = props;} setState(next) {Object.assign(this.state, next);}}, createElement() {}},
     }};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
-    '\nWebPCache.convert = convert; module.exports = {personalVideo, personalURL, preparePersonalCon, storePersonalCon, removePersonalCon, getDCConImage, pickerPacks, PersonalConManager, updateQueue, activeQueue, Embedding};', context);
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.WebPCache.convert = context.convert;
   return {...context.module.exports, data, calls, dir};
 }
 

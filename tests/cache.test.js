@@ -21,7 +21,7 @@ function runtime(folder, cacheFolder, data = {}, extra = {}) {
     } }, React: { Component: class {
     } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }
   };
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + "\nmodule.exports={appDataDirectory:(os,env,home)=>DCConPlatformAdapters.appDataDirectory(os,env,home,platform.paths.join),cachePath,readCacheFile,writeCacheFile,SharedConfig,getDCConImage,Embedding,WebPCache,loadData,saveData,setImageLoader:value=>{getDCConImage=value;}};", context);
+  require('./helpers/core.cjs').loadCore(context);
   return { ...context.module.exports, context };
 }
 function fixture(t) {
@@ -42,6 +42,20 @@ test("cache paths use OS app data and the same root for installation and channel
   const fallback = runtime("/unused", void 0, {}, { require: (name) => name === "path" ? path.posix : name === "process" ? { platform: "linux", env: { XDG_CONFIG_HOME: "/custom" } } : name === "os" ? { homedir: () => "/home/me" } : require(name) });
   assert.equal(fallback.cachePath("models"), "/home/me/.config/discord-dccon/cache/models");
 });
+test('BetterDiscord resolves native storage paths without requiring its unsupported os module', () => {
+  for (const [process, expected] of [
+    [{platform: 'darwin', isWeb: true, env: {HOME: '/Users/test'}}, '/Users/test/Library/Application Support/discord-dccon/cache'],
+    [{platform: 'win32', isWeb: true, env: {APPDATA: 'C:/Users/test/AppData/Roaming'}}, 'C:/Users/test/AppData/Roaming/discord-dccon/cache'],
+    [{platform: 'linux', isWeb: true, env: {HOME: '/home/test'}}, '/home/test/.config/discord-dccon/cache'],
+  ]) {
+    const h = runtime('/plugins', undefined, {}, {process, require: name => {
+      if (name === 'os') throw Error('BetterDiscord does not provide os');
+      return name === 'path' ? path.posix : require(name);
+    }});
+    assert.equal(h.cachePath(), expected);
+  }
+});
+
 test("legacy images, merged images, codecs and models migrate without modifying the originals", async (t) => {
   const { root, cache } = fixture(t), old = path.join(root, "old"), h = runtime(old, cache);
   for (const [kind, previous] of [["images", ""], ["merged", "merged"], ["webp-codecs", "webp-codecs"], ["models", "embedding-gemma2"]]) {

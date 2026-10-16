@@ -1,3 +1,4 @@
+import styles from '../core/style.css';
 import {createPlugin} from '../core/plugin.ts';
 import {createUserscriptPlatform} from '../platform/userscript.ts';
 import {version} from '../../package.json';
@@ -10,7 +11,7 @@ export async function start({page, request, load}: Parameters<typeof createUsers
   if (document.documentElement.dataset.dcconAttachPoc) return;
   document.documentElement.dataset.dcconAttachPoc = 'starting';
   const adapter = createUserscriptPlatform({page, request, load});
-  const Plugin = createPlugin(adapter.platform, {splitWorkerSource: __DCCON_SPLIT_WORKER__});
+  const Plugin = createPlugin(adapter.platform, {splitWorkerSource: __DCCON_SPLIT_WORKER__, styles});
   const plugin = new Plugin({name: 'discord-dccon', version});
   await plugin.start();
   document.documentElement.dataset.dcconAttachPoc = 'started';

@@ -27,8 +27,8 @@ async function scenario(file, initial, run) {
     DOM: {addStyle() {}, removeStyle() {}},
     Webpack: {getByKeys: () => ({locale: 'ko', addChangeListener() {}}), getStore: name => name === 'SelectedChannelStore' ? undefined : {getUploads: () => nativeUploads}, getModule: () => ({addFiles: args => { uploads.push(args); nativeUploads.push({id: String(uploads.length), item: args.files[0]}); }}), Filters: {byKeys: () => () => true}},
   }};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
-    '\nWebPCache.convert = async bytes => bytes; module.exports = {DCConButton, DCConCategory, DCConSettingsPanel, Plugin: module.exports, DCConPanel, DCConItem, BufferTray: typeof BufferTray === "undefined" ? null : BufferTray, sendDCConMessage, updateQueue, setAnimationTiming: value => {animationTiming = value;}, PackThumbnail: typeof PackThumbnail === "undefined" ? null : PackThumbnail, events: PluginEvents, setChannel: id => { currentChannelId = id; }};', context);
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.WebPCache.convert = async bytes => bytes;
   const {DCConSettingsPanel, Plugin} = context.module.exports;
   const root = createRoot(document.getElementById('root'));
   const ref = React.createRef();

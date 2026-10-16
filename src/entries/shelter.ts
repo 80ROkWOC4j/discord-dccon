@@ -1,3 +1,4 @@
+import styles from '../core/style.css';
 import {createPlugin} from '../core/plugin.ts';
 import {createShelterPlatform} from '../platform/shelter.ts';
 import type {NativeBridge, ModuleLookup} from '../platform/types.ts';
@@ -47,7 +48,7 @@ export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge,
         return;
       }
       adapter = createShelterPlatform(shelter, DCConNative, dcconWebpack);
-      const Plugin = createPlugin(adapter.platform, {splitWorkerSource: __DCCON_SPLIT_WORKER__});
+      const Plugin = createPlugin(adapter.platform, {splitWorkerSource: __DCCON_SPLIT_WORKER__, styles});
       plugin = new Plugin({name: 'discord-dccon', version: dcconVersion});
       await plugin.start();
     } catch (caught) { const error = caught as Error;

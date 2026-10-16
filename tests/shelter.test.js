@@ -137,13 +137,10 @@ test('image sends use shelter Discord REST, never an ambiguous HTTP export', asy
     getModuleBySource: filter => [wrong, CloudUpload].find(value => filter(value))};
   const shelter = {http: {_raw: rest}, React: {Component: class {}}, plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
   const adapter = createShelterPlatform(shelter, {initialData: {}}, webpack);
-  const module = {exports: {}};
-  const source = require('./helpers/core.cjs').coreSource();
-  vm.runInNewContext(source + '\nmodule.exports={sendImagesDirectly};', {
-    module, DCConPlatform: adapter.platform, structuredClone, setTimeout, clearTimeout,
+  const api = require('./helpers/core.cjs').loadCore({ DCConPlatform: adapter.platform, structuredClone, setTimeout, clearTimeout,
   });
   const imageAttempt = {};
-  await module.exports.sendImagesDirectly([{name: 'dccon.png', size: 3}], 'channel-test', imageAttempt);
+  await api.sendImagesDirectly([{name: 'dccon.png', size: 3}], 'channel-test', imageAttempt);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/channels/channel-test/messages');
   assert.equal(calls[0].body.content, '');
@@ -201,39 +198,37 @@ test('native bridge confines writes and reuses legacy binary cache read-only', a
   assert.equal(hash(['abc'], 'hex'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 });
 
-test('generated shelter bootstrap and DCCon source parse', async () => {
-  const source = require('./helpers/core.cjs').coreSource();
-  assert.doesNotThrow(() => new vm.Script(source));
-  const plugin = require('./helpers/core.cjs').shelterLifecycleSource();
-  assert.doesNotThrow(() => new vm.Script(plugin));
+test('generated shelter and BetterDiscord entries parse', () => {
+  const {buildBetterDiscord, buildShelterPlugin} = require('../scripts/build.cjs');
+  assert.doesNotThrow(() => new vm.Script(buildBetterDiscord()));
+  assert.doesNotThrow(() => new vm.Script(buildShelterPlugin('test')));
 });
 
-test('plugin starts after first-store retry without PoC status APIs and cleans up', async () => {
-  const source = require('./helpers/core.cjs').shelterLifecycleSource();
+test('plugin starts after first-store retry and cleans up through the actual entrypoint', async () => {
+  const {JSDOM} = require('jsdom');
+  const dom = new JSDOM('<!doctype html><body></body>');
   const timers = [], events = [];
-  let firstStore = true, lifecycle;
-  const context = vm.createContext({
-    console, dcconVersion: '3.0.0', DCConNative: {},
-    dcconWebpack: {getByKeys: () => ({})},
-    setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {},
-    createShelterPlatform: () => ({platform: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
-    createPlugin: platform => class {start(){platform.mount();} stop(){platform.unmount();}}, __DCCON_SPLIT_WORKER__: '',
-    shelter: {React: {createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
-      http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
-      plugin: {id: 'discord-dccon', flushStore() {
-        if (firstStore) {firstStore = false; throw Error('not a shelter storage proxy');}
-      }},
-      plugins: {stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = vm.runInContext(source, context); lifecycle.onLoad();}},
-      ui: {showToast: message => assert.fail(JSON.stringify(message))}},
-  });
-  lifecycle = vm.runInContext(source, context);
-  lifecycle.onLoad();
-  assert.equal(timers.length, 1);
-  timers.shift()();
-  assert.deepEqual(events, ['mount']);
-  lifecycle.onUnload();
-  assert.deepEqual(events, ['mount', 'unmount', 'dispose']);
-  assert.equal(context.DCConShelterStatus, undefined);
+  let firstStore = true, lifecycle, started;
+  const host = {React: {Component: class {}, createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
+    util: {getFiber() {}}, flux: {storesFlat: {}}, http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
+    plugin: {id: 'discord-dccon', store: {}, flushStore() {
+      if (firstStore) {firstStore = false; throw Error('not a shelter storage proxy');}
+    }},
+    plugins: {stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = create(); started = lifecycle.onLoad();}},
+    ui: {injectCss() {events.push('mount'); return () => events.push('unmount');}, showToast: message => assert.fail(message.content)}};
+  const native = {config: async () => ({version: 2, settings: {dccons: [], recent: [], embeddingEnabled: false}})};
+  const webpack = {getByKeys: () => ({}), isReady: () => true};
+  const context = {module: {exports: {}}, document: dom.window.document, window: dom.window, navigator: dom.window.navigator,
+    MutationObserver: dom.window.MutationObserver, crypto: globalThis.crypto, structuredClone, queueMicrotask, console,
+    setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {}};
+  vm.runInNewContext(require('../scripts/build.cjs').buildEntry('shelter', {format: 'cjs'}), context);
+  const create = () => context.module.exports.createShelterPlugin(host, native, webpack, 'test');
+  try {
+    lifecycle = create(); await lifecycle.onLoad();
+    assert.equal(timers.length, 1); timers.shift()(); await started;
+    assert.deepEqual(events, ['mount']);
+    lifecycle.onUnload(); assert.deepEqual(events, ['mount', 'unmount']);
+  } finally {dom.window.close();}
 });
 
 for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
@@ -367,12 +362,12 @@ test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings cha
 });
 
 test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native rendering on other hosts', async () => {
-  const source = require('./helpers/core.cjs').coreSource();
   const pending=[],revoked=[];
   const context={module:{exports:{}},AbortController,URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
     platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
       net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
-  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+  context.platform.discord = {classes: {}};
+  context.module.exports = require('./helpers/core.cjs').importCore(context).createMediaUI(context.platform, {}).DCConImage;
   const Image=context.module.exports,image=new Image({src:'first',loading:'lazy'});
   image.componentDidMount();pending[0].resolve('first');await Promise.resolve();
   assert.equal(image.render().props.src,'blob:first');assert.equal(image.render().props.loading,'eager');
@@ -386,7 +381,6 @@ test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native 
 });
 
 test('Blob thumbnails wait for intersection and ignore stale visibility callbacks', async () => {
-  const source = require('./helpers/core.cjs').coreSource();
   const downloads=[], observers=[], revoked=[];
   const context={module:{exports:{}},AbortController,
     IntersectionObserver:class {
@@ -399,7 +393,8 @@ test('Blob thumbnails wait for intersection and ignore stale visibility callback
     platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
       net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
   };
-  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+  context.platform.discord = {classes: {}};
+  context.module.exports = require('./helpers/core.cjs').importCore(context).createMediaUI(context.platform, {}).DCConImage;
   const Image=context.module.exports, scrollRoot={};
   const images=Array.from({length:200},(_,i)=>{
     const image=new Image({src:'image-'+i,loading:'lazy'});

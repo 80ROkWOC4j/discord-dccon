@@ -6,7 +6,8 @@ const executablePath = [process.env.WEBP_TEST_BROWSER, chromium.executablePath()
 function api(extra = {}) {
   const context = { module: { exports: {} }, URL, Blob, File, BdApi: { React: { Component: class {
   } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }, ...extra };
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + "\nmodule.exports={WebPCache,animationTiming,mergeAnimationReason,mergeAnimatedImages,getMergedImage,BdApi,setMergeForTest: value => {mergeAnimatedImages = value;}};", context);
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.BdApi = context.BdApi;
   return context.module.exports;
 }
 

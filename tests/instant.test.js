@@ -62,11 +62,10 @@ function harness({attachFiles, uploadFails = false, postFails = false, missing =
     Net: {fetch: async () => { calls.fetches++; if (fetchFails) throw new Error('offline'); return {arrayBuffer: async () => new Uint8Array(downloadBytes).buffer}; }},
     UI: {showToast: text => calls.errors.push(text)}, Logger: {error() {}},
   }};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
-    // Conversion itself is exercised with real WASM in webp.test.js; send tests use byte fixtures.
-    '\nWebPCache.convert = async bytes => bytes; module.exports = {WebPCache, sendDCConMessage, inspectInstantSend, events: PluginEvents, activeQueue, removeBuffered, getDCConImage, setChannel: id => {currentChannelId = id;}};', context);
-  if (splitImage) { context.splitImageForTest = splitImage; vm.runInNewContext("splitImageIntoNine = splitImageForTest;", context); }
-  if (mergeImage) { context.mergeImageForTest = mergeImage; vm.runInNewContext("mergeAnimatedImages = mergeImageForTest;", context); }
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.WebPCache.convert = async bytes => bytes;
+  if (splitImage) context.module.exports.setSplitForTest(splitImage);
+  if (mergeImage) context.module.exports.setMergeForTest(mergeImage);
   const api = context.module.exports;
   api.setChannel('test-channel');
   api.events.subscribe('DCCON_CLOSE', () => calls.closes++);

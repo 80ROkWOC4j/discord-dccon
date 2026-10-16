@@ -8,8 +8,7 @@ function runtime(initial = {}, fetch = undefined, globals = {}) {
     BdApi: {Logger: {error() {}}, Net: {fetch}, Data: {load: (_, key) => data[key], save: (_, key, value) => {data[key] = value;}},
       React: {Component: class {constructor(props) {this.props = props;} setState(value) {Object.assign(this.state, value);}}},
       Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
-    '\nmodule.exports = {Embedding, DCConPanel, readEmbeddingVectors, setImageLoader: loader => {getDCConImage = loader;}};', context);
+  require('./helpers/core.cjs').loadCore(context);
   return {...context.module.exports, data};
 }
 

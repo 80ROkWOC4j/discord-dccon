@@ -60,7 +60,6 @@ test('Firefox GM cookie continuation lines cannot become invalid response header
 });
 
 test('remote thumbnails render without a React hook dispatcher and release stale requests and URLs', async () => {
-  const source = require('./helpers/core.cjs').coreSource();
   const pending = [], revoked = [];
   const context = {module:{exports:{}}, AbortController,
     URL:{createObjectURL: value => 'blob:' + value, revokeObjectURL: value => revoked.push(value)},
@@ -70,7 +69,8 @@ test('remote thumbnails render without a React hook dispatcher and release stale
       useState(){throw Error('No dispatcher');}, useEffect(){throw Error('No dispatcher');},
     },net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({src,signal,resolve}))}},
   };
-  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'), source.indexOf('const ManduIcon')) + '\nmodule.exports=DCConImage;', context);
+  context.platform.discord = {classes: {}};
+  context.module.exports = require('./helpers/core.cjs').importCore(context).createMediaUI(context.platform, {}).DCConImage;
   const Image = context.module.exports, image = new Image({src:'first',loading:'lazy'});
   image.componentDidMount();
   pending[0].resolve('first'); await Promise.resolve();

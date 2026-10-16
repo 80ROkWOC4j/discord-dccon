@@ -49,7 +49,7 @@ for (const installation of ['BetterDiscord', 'shelter', 'BetterDiscord bundle', 
     let lifecycle;
     plugin = {start() {lifecycle = vm.runInNewContext(source, context); return lifecycle.onLoad();}, stop() {lifecycle?.onUnload();}};
   } else {
-    vm.runInNewContext(require('./helpers/core.cjs').coreSource() + '\nmodule.exports={Plugin:module.exports,getChannel:()=>currentChannelId};', context);
+    Object.assign(exported, {exports: require('./helpers/core.cjs').loadCore(context)});
     plugin = new exported.exports.Plugin({name: 'discord-dccon'});
   }
   const act = callback => React.act(async () => {callback(); await new Promise(resolve => setImmediate(resolve));});

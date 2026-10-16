@@ -35,9 +35,8 @@ function load(file, {components = false, missingSearchModule = true, environment
       ...api,
     },
   };
-  const source = require('./helpers/core.cjs').coreSource();
-  vm.runInNewContext(source + (components ? '\nmodule.exports = {DCConButton, DCConPanel, events: typeof PluginEvents === "undefined" ? undefined : PluginEvents};' : ''), context);
-  return context.module.exports;
+  const result = require('./helpers/core.cjs').loadCore(context);
+  return components ? result : result.Plugin;
 }
 
 test('button and picker render with valid refs; clearing search resets the input', () => {

@@ -31,7 +31,12 @@ export function createBetterDiscordPlatform(api: BetterDiscord, nativeRequire: N
     cache(...parts) {
       if (api.Plugins.cacheFolder) return paths.join(api.Plugins.cacheFolder, ...parts);
       const runtime = globalThis.process || nativeRequire('process');
-      return paths.join(appDataDirectory(runtime.platform, runtime.env, nativeRequire('os').homedir(), paths.join), 'discord-dccon', 'cache', ...parts);
+      // BetterDiscord does not expose the os module. Its process environment
+      // supplies the native paths; only ordinary Node needs the homedir fallback.
+      const appData = runtime.platform === 'win32' && runtime.env.APPDATA
+        ? runtime.env.APPDATA
+        : appDataDirectory(runtime.platform, runtime.env, runtime.env.HOME || runtime.env.USERPROFILE || nativeRequire('os').homedir(), paths.join);
+      return paths.join(appData, 'discord-dccon', 'cache', ...parts);
     },
     legacyCache: (...parts) => paths.join(api.Plugins.folder!, 'discord-dccon-cache', ...parts),
     dataRoot: () => api.Plugins.dataFolder || paths.dirname(paths.cache()),

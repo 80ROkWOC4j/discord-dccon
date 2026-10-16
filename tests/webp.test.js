@@ -11,7 +11,7 @@ const executablePath = [process.env.WEBP_TEST_BROWSER, chromium.executablePath()
 test('animated WebP keeps its extension while still WebP uses the GIF filename without changing bytes', async () => {
   const context = {module: {exports: {}}, File, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + '\nmodule.exports=webpFile;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).webpFile;
   for (const [chunk, flags, name] of [['VP8X', 2, 'dccon.webp'], ['VP8X', 18, 'dccon.webp'],
     ['VP8X', 16, 'dccon.gif'], ['VP8L', 2, 'dccon.gif'], ['VP8 ', 0, 'dccon.gif']]) {
     const bytes = Buffer.alloc(30);
@@ -27,7 +27,7 @@ test('animated WebP keeps its extension while still WebP uses the GIF filename w
 test('real WASM codecs preserve still pixels, GIF playback, and survive repeated conversions in a Worker', {skip: !executablePath}, async t => {
   const context = {module: {exports: {}}, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + '\nmodule.exports=WebPCache;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports;
   const assets = {};
   for (const [kind, {name, hashes}] of Object.entries(codec.specs).filter(([, spec]) => spec.name)) {
@@ -110,8 +110,7 @@ test('codec downloads are pinned, cached offline, coalesced, and reject altered 
       const name = url.split('/').pop();
       return {arrayBuffer: async () => corrupt ? Buffer.from('tampered') : fs.readFileSync(path.join(__dirname, '../node_modules/@libwebp-wasm/gif2webp/es', name))};
     }}, Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  const source = require('./helpers/core.cjs').coreSource() + '\nmodule.exports=WebPCache;';
-  vm.runInNewContext(source, context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports;
   await Promise.all([codec.runtime('gif', 0), codec.runtime('gif', 0)]);
   assert.equal(fetches, 2);
@@ -135,7 +134,7 @@ test('GIF fallback only handles codec conversion errors and stays in the cancell
   }
   const context = {module: {exports: {}}, Worker, URL, Blob, BdApi: {
     React: {Component: class {}}, Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + '\nmodule.exports=WebPCache;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports, gif = new TextEncoder().encode('GIF89a');
   codec.runtime = async kind => {requests.push(kind); return {source: '', wasm: new Uint8Array()};};
   const first = codec.convert(gif);
@@ -168,7 +167,7 @@ test('GIF fallback only handles codec conversion errors and stays in the cancell
 test('GIF fallback preserves composited pixels, disposal, timing and finite loops with real codecs', {skip: !executablePath}, async t => {
   const context = {module: {exports: {}}, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + '\nmodule.exports={WebPCache, isWebP};', context);
+  require('./helpers/core.cjs').loadCore(context);
   const {WebPCache: codec, isWebP} = context.module.exports, assets = {};
   for (const [kind, {name}] of Object.entries(codec.specs).filter(([, spec]) => spec.name)) {
     const directory = path.join(__dirname, '../node_modules/@libwebp-wasm', name, 'es');
