@@ -161,6 +161,9 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
   class DCConItem extends platform.react.Component<ItemProps, {error: boolean; busy: boolean; favorite: boolean}> {
     declare refreshFavorite: () => void;
     declare sending: boolean;
+    declare press?: {id: number; x: number; y: number; timer?: ReturnType<typeof setTimeout>};
+    declare suppressClick: boolean;
+    declare touchInteraction: boolean;
 
     constructor(props: ItemProps) {
       super(props);
@@ -169,16 +172,52 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
     }
 
     componentDidMount() { PluginEvents.subscribe("DCCON_FAVORITES_UPDATE", this.refreshFavorite); }
-    componentWillUnmount() { PluginEvents.unsubscribe("DCCON_FAVORITES_UPDATE", this.refreshFavorite); }
+    componentWillUnmount() { this.cancelPress(); PluginEvents.unsubscribe("DCCON_FAVORITES_UPDATE", this.refreshFavorite); }
+
+    cancelPress() {
+      clearTimeout(this.press?.timer);
+      this.press = undefined;
+    }
+
+    startPress(event: React.PointerEvent) {
+      this.cancelPress();
+      this.suppressClick = false;
+      this.touchInteraction = event.pointerType === "touch";
+      if (!this.touchInteraction) return;
+      if (!event.isPrimary || event.button !== 0 || this.state.busy || this.state.error) {this.suppressClick = true; return;}
+      this.press = {id: event.pointerId, x: event.clientX, y: event.clientY,
+        timer: setTimeout(() => this.collectPress(), 450)};
+    }
+
+    collectPress() {
+      if (!this.press || this.suppressClick) return;
+      clearTimeout(this.press.timer);
+      this.press.timer = undefined;
+      this.suppressClick = true;
+      void this.attach(true);
+    }
+
+    movePress(event: React.PointerEvent) {
+      if (this.press?.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX - this.press.x, event.clientY - this.press.y) > 10) {
+        this.suppressClick = true;
+        this.cancelPress();
+      }
+    }
+
+    endPress(event: React.PointerEvent, cancelled = false) {
+      if (this.press?.id !== event.pointerId) return;
+      if (cancelled) this.suppressClick = true;
+      this.cancelPress();
+    }
 
     toggleFavorite() {
       const con = { ...this.props.con, packageIdx: this.props.packageIdx };
       packs.toggleFavorite(con);
     }
 
-    async attach(event: React.MouseEvent) {
+    async attach(keepOpen: boolean) {
       if (this.sending) return;
-      const keepOpen = event.shiftKey;
       this.sending = true;
       this.setState({ busy: true });
       try {
@@ -193,9 +232,23 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       const h = platform.react.createElement;
       const { con } = this.props;
       return h("div", { className: "dccon-tile" },
-        h("button", { type: "button", title: con.title + " · Shift+클릭: 이미지 모아두기",
+        h("button", { type: "button", title: con.title + " · 길게 누르기 / Shift+클릭: 이미지 모아두기",
           "aria-label": con.title, className: "dccon-item", disabled: this.state.busy || this.state.error,
-          onClick: event => this.attach(event),
+          onPointerDown: event => this.startPress(event),
+          onPointerMove: event => this.movePress(event),
+          onPointerUp: event => this.endPress(event),
+          onPointerCancel: event => this.endPress(event, true),
+          onPointerLeave: event => this.endPress(event, true),
+          onContextMenu: event => {
+            if (!this.touchInteraction) return;
+            event.preventDefault(); event.stopPropagation();
+            this.collectPress();
+          },
+          onKeyDown: () => {this.cancelPress(); this.suppressClick = false; this.touchInteraction = false;},
+          onClick: event => {
+            if (this.suppressClick) {event.preventDefault(); event.stopPropagation(); this.suppressClick = false; return;}
+            void this.attach(event.shiftKey);
+          },
         }, this.state.error ? h("span", { className: "dccon-item-error" }, "이미지 로드 실패")
           : con.path.startsWith("personal:") ? h(PersonalImage, {con, onError: () => this.setState({error: true})})
           : h(DCConImage, { src: DCConProxyURL + con.path, alt: con.title, loading: "lazy", onError: () => this.setState({ error: true }) }),
@@ -340,8 +393,8 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
           )
         ),
         h("div", { className: "dccon-footer" }, platform.composer?.attachFiles
-          ? "클릭: 입력창에 첨부 · Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
-          : "클릭: 누적 콘과 함께 전송 · Shift+클릭: 모아두기 (최대 9개)")
+          ? "탭/클릭: 입력창에 첨부 · 길게 누르기/Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
+          : "탭/클릭: 누적 콘과 함께 전송 · 길게 누르기/Shift+클릭: 모아두기 (최대 9개)")
       );
     }
   }

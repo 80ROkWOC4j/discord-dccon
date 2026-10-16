@@ -21,6 +21,8 @@
 .dccon-trigger, .dccon-popover button { touch-action: manipulation; }
 @media (any-pointer: coarse) {
   .dccon-popover input, .dccon-settings-panel input { font-size: 16px; }
+  .dccon-item { user-select: none; -webkit-touch-callout: none; }
+  .dccon-item img { pointer-events: none; }
 }
 .dccon-buttonContainer { margin-left: 8px; }
 .dccon-overlay { position: fixed; inset: 0; z-index: 10000; }
