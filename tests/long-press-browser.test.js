@@ -26,12 +26,14 @@ test('real touch gestures collect once, preserve short taps, allow scrolling and
   `}, bundle: true, write: false, format: 'iife', platform: 'browser', define: {'process.env.NODE_ENV': '"production"'}}).outputFiles[0].text;
   const browser = await chromium.launch({executablePath, headless: true}); t.after(() => browser.close());
   const page = await browser.newPage({viewport: {width: 390, height: 700}, hasTouch: true, isMobile: true});
+  // Keep touch emulation and injected gestures on the same CDP session.
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', {enabled: true, maxTouchPoints: 1});
   await page.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>${fs.readFileSync(path.join(__dirname, '../src/core/style.css'),'utf8')}</style>
     <section class="dccon-popover" style="width:374px;height:500px;left:8px;top:8px"><div class="dccon-browser-content" id="scroll"><div class="dccon-items" id="items"></div></div></section>`);
   await page.addScriptTag({content: source});
   const item = page.locator('.dccon-item').first(); await item.waitFor();
   assert.equal(await item.locator('img').evaluate(i => getComputedStyle(i).pointerEvents), 'none');
-  const cdp = await page.context().newCDPSession(page);
   const point = async () => {const r = await item.boundingBox(); return {x: r.x + r.width / 2, y: r.y + r.height / 2};};
   const touch = (type, p) => cdp.send('Input.dispatchTouchEvent', {type, touchPoints: p ? [{...p, id: 1}] : []});
   let p = await point();
