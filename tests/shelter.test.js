@@ -195,6 +195,8 @@ test('native bridge confines writes and reuses legacy binary cache read-only', a
   assert.throws(() => allowedDownload('https://discord.com/api/v9/users/@me'));
   assert.throws(() => allowedDownload('https://dcinside.com.evil.test/'));
   assert.equal(allowedDownload('https://dcimg5.dcinside.com/image'), 'https://dcimg5.dcinside.com/image');
+  assert.equal(allowedDownload('https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases'), 'https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases');
+  assert.throws(() => allowedDownload('https://api.github.com.evil.test/'));
   assert.equal(hash(['abc'], 'hex'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 });
 

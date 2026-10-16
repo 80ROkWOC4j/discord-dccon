@@ -9,6 +9,8 @@ import type {Events} from '../events.ts';
 import type {MediaUI} from './media.ts';
 import {getLocaleStrings as stringsFor} from '../strings.ts';
 import {DCConProxyURL} from '../packs.ts';
+import {version} from '../../../package.json';
+import {checkForUpdate} from '../updates.ts';
 export function createSettingsUI(platform: Platform, { packs, personal, sending, embedding: Embedding, events: PluginEvents, media }: {
   packs: Packs;
   personal: Personal;
@@ -220,15 +222,52 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     render() {
       const h = platform.react.createElement;
       return h("section", {className: "dccon-embedding-environment"},
-        h("h3", null, "디시콘 임베딩"),
-        h("label", null, h("input", {type: "checkbox", checked: Embedding.enabled(), onChange: e => Embedding.toggle(e.target.checked)}), " 의미 기반 검색 활성화"),
-        h("p", null, "활성화하면 EmbeddingGemma 2 모델(약 550 MB)을 다운로드하고 WebGPU로 이미지를 임베딩 합니다."),
+        h("div", {className: "dccon-setting-row"},
+          h("h3", null, "의미 기반 검색"),
+          h("button", {type: "button", role: "switch", className: "dccon-switch", "aria-label": "의미 기반 검색",
+            "aria-checked": Embedding.enabled(), onClick: () => Embedding.toggle(!Embedding.enabled())},
+            h("span", {"aria-hidden": true}))),
+        h("p", null, "디시콘을 감정이나 상황으로 검색합니다."),
+        h("p", null, "활성화하면 EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 다운로드하고 WebGPU로 이미지를 분석합니다."),
         Embedding.enabled() && h("div", {className: "dccon-embedding-progress"},
           h("p", {role: "status"}, `${Embedding.status.phase} ${Embedding.status.file || ""} · ${Embedding.status.completed}/${Embedding.status.total} · 실패 ${Embedding.status.errors}`),
           h("progress", {"aria-label": "디시콘 색인 진행률", max: Math.max(1, Embedding.status.total), value: ["이미지 색인", "준비 완료", "완료 · 일부 실패", "오류", "꺼짐"].includes(Embedding.status.phase) ? Embedding.status.completed : undefined}),
           Embedding.status.error && h("p", {role: "alert"}, Embedding.status.error),
-          ["오류", "꺼짐", "완료 · 일부 실패"].includes(Embedding.status.phase) && h(Button, {text: "다시 시도", onClick: () => Embedding.start()})),
-        h("p", null, "모델은 공통 캐시의 models, 벡터는 vectors 아래에 보관됩니다. 비활성화 하면 작업 중단합니다."));
+          ["오류", "꺼짐", "완료 · 일부 실패"].includes(Embedding.status.phase) && h(Button, {text: "다시 시도", onClick: () => Embedding.start()})));
+    }
+  }
+
+  class UpdatePanel extends platform.react.Component<Record<string, never>, {busy: boolean; message: string}> {
+    controller?: AbortController;
+    timer?: ReturnType<typeof setTimeout>;
+    constructor(props: Record<string, never>) {super(props); this.state = {busy: false, message: ''};}
+    componentWillUnmount() {this.controller?.abort(); this.controller = undefined; clearTimeout(this.timer);}
+    async check() {
+      if (this.controller) return;
+      const controller = this.controller = new AbortController();
+      this.setState({busy: true, message: ''});
+      this.timer = setTimeout(() => controller.abort(), 15000);
+      try {
+        const result = await checkForUpdate(platform.net, version, controller.signal);
+        if (this.controller !== controller) return;
+        this.setState({message: result.available ? `업데이트할 수 있습니다. 최신 버전: ${result.latestVersion}`
+          : result.latestVersion ? '새로운 업데이트가 없습니다.' : '확인할 수 있는 공개 릴리스가 없습니다.'});
+      } catch (_error) {
+        if (this.controller !== controller) return;
+        this.setState({message: controller.signal.aborted ? '확인 시간이 초과되었습니다. 다시 시도해 주세요.'
+          : _error instanceof Error ? _error.message : '업데이트 확인에 실패했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.'});
+      } finally {
+        clearTimeout(this.timer);
+        if (this.controller === controller) {this.controller = undefined; this.setState({busy: false});}
+      }
+    }
+    render() {
+      const h = platform.react.createElement;
+      return h('section', {className: 'dccon-update'},
+        h('div', {className: 'dccon-update-row'},
+          h('div', {className: 'dccon-update-version'}, h('h3', null, '현재 버전'), h('span', null, `v${version}`)),
+          h(Button, {text: this.state.busy ? '확인 중…' : '업데이트 확인', disabled: this.state.busy, onClick: () => this.check()})),
+        h('p', {role: 'status'}, this.state.message));
     }
   }
 
@@ -334,7 +373,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
         h("p", null, "진단은 자동으로 제출되지 않으며, 메시지를 보내거나 입력 중인 내용을 변경하지 않습니다."),
         h(Button, { text: this.state.diagnosticReport ? "진단 정보 새로고침" : "진단 정보 만들기", onClick: () => {
           const report = inspectInstantSend();
-          this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: "4.0.0-beta.2", generatedAt: new Date().toISOString(), ...report }, null, 2),
+          this.setState({ diagnosticReport: JSON.stringify({ pluginVersion: version, generatedAt: new Date().toISOString(), ...report }, null, 2),
             copyStatus: "" });
         } }),
         this.state.diagnosticReport && h("div", null,
@@ -388,7 +427,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
       const h = platform.react.createElement;
       if (this.props.section === "settings") {
         return h("div", {className: "dccon-settings-panel dccon-user-settings"},
-          h(EmbeddingEnvironmentPanel), this.renderDiagnostics());
+          h(UpdatePanel), h(EmbeddingEnvironmentPanel), this.renderDiagnostics());
       }
       return h("div", {className: "dccon-settings-panel"},
         h("div", {className: "dccon-tab-menu"},

@@ -34,6 +34,19 @@ test('userscript downloads directly with GM, without cookies or a proxy', async 
   native.dispose();
 });
 
+test('userscript permits anonymous GitHub release checks with the JSON Accept header', async () => {
+  let options;
+  const native = createUserscriptNative(value => {options = value; return {abort() {}};}, {indexedDB: new IDBFactory()});
+  const pending = native.fetch('updates', 'https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases',
+    {headers: {Accept: 'application/vnd.github+json'}});
+  assert.equal(options.headers.Accept, 'application/vnd.github+json');
+  assert.equal(options.anonymous, true);
+  options.onload({status: 200, responseHeaders: 'Content-Type: application/json', response: new TextEncoder().encode('[]').buffer});
+  assert.equal((await pending).status, 200);
+  await assert.rejects(native.fetch('bad', 'https://api.github.com.evil.test/releases'), /Unsupported/);
+  native.dispose();
+});
+
 test('userscript unload aborts and rejects an outstanding GM request', async () => {
   let aborted = 0;
   const native = createUserscriptNative(() => ({abort() {aborted++;}}), {indexedDB: new IDBFactory()});

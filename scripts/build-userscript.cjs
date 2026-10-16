@@ -21,6 +21,7 @@ async function main() {
 // @connect dcinside.com
 // @connect ac.arca.live
 // @connect cdn.jsdelivr.net
+// @connect api.github.com
 // @connect huggingface.co
 // @connect hf.co
 // @connect xethub.hf.co

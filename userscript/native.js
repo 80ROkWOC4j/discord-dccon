@@ -10,7 +10,7 @@ function createUserscriptNative(gmRequest, environment = globalThis) {
     const url = new URL(input);
     const hosts = ['dcinside.com', 'ac.arca.live', 'cdn.jsdelivr.net', 'huggingface.co', 'hf.co', 'xethub.hf.co'];
     if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-        !hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host))) throw Error('Unsupported download host');
+        !(url.hostname === 'api.github.com' || hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host)))) throw Error('Unsupported download host');
     return url;
   }
   const native = {
@@ -31,7 +31,7 @@ function createUserscriptNative(gmRequest, environment = globalThis) {
         if (!['GET', 'POST'].includes(method)) throw Error('Unsupported download method');
         const headers = {};
         for (const [key, value] of Object.entries(options.headers || {}))
-          if (['content-type', 'x-requested-with', 'referer'].includes(key.toLowerCase())) headers[key] = value;
+          if (['accept', 'content-type', 'x-requested-with', 'referer'].includes(key.toLowerCase())) headers[key] = value;
         let finished = false;
         const finish = (error, value) => {
           if (finished) return;

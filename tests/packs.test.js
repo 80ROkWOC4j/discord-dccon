@@ -204,7 +204,7 @@ test('diagnostic tab displays a copyable report without uploading or modifying s
     assert.equal(uploads.length, 0);
     assert.equal(JSON.stringify(data), before);
     await click([...document.querySelectorAll('.dccon-diagnostics button')].find(button => button.textContent === '제보용 정보 복사'));
-    assert.match(document.querySelector('[role="status"]').textContent, /Ctrl\+C/);
+    assert.match(document.querySelector('.dccon-diagnostics [role="status"]').textContent, /Ctrl\+C/);
     assert.equal(textarea.selectionEnd, textarea.value.length);
     assert.deepEqual(errors, []);
   });
@@ -218,6 +218,65 @@ test('settings no longer offer removed send modes', async () => {
     assert.ok(document.querySelector('.dccon-diagnostics'));
     assert.equal(requests(), 0);
     assert.equal(uploads.length, 0);
+  });
+});
+
+test('semantic search switch persists its state and can stop an active download', async () => {
+  await scenario('discord-dccon.plugin.js', [], async ({root, DCConSettingsPanel, Embedding, data, click, errors}) => {
+    Embedding.start = () => Embedding.update({phase: '모델 다운로드'});
+    await React.act(async () => root.render(React.createElement(DCConSettingsPanel, {section: 'settings'})));
+    const toggle = document.querySelector('[role="switch"][aria-label="의미 기반 검색"]');
+    assert.equal(toggle.tagName, 'BUTTON');
+    assert.equal(toggle.getAttribute('aria-checked'), 'false');
+    await click(toggle);
+    assert.equal(toggle.getAttribute('aria-checked'), 'true');
+    assert.equal(data.embeddingEnabled, true);
+    assert.match(document.querySelector('.dccon-embedding-progress').textContent, /모델 다운로드/);
+    assert.equal(toggle.disabled, false);
+    await click(toggle);
+    assert.equal(toggle.getAttribute('aria-checked'), 'false');
+    assert.equal(data.embeddingEnabled, false);
+    assert.equal(document.querySelector('.dccon-embedding-progress'), null);
+    assert.equal(Embedding.status.phase, '꺼짐');
+    assert.deepEqual(errors, []);
+  });
+});
+
+test('settings checks releases only on click, prevents duplicate requests, and permits retry after errors', async () => {
+  await scenario('discord-dccon.plugin.js', [], async ({root, DCConSettingsPanel, platform, click, data, errors}) => {
+    let calls = 0, finish;
+    const before = JSON.stringify(data);
+    platform.net.fetch = async () => {calls++; return new Promise(resolve => {finish = resolve;});};
+    await React.act(async () => root.render(React.createElement(DCConSettingsPanel, {section: 'settings'})));
+    assert.ok(document.querySelector('.dccon-update').textContent.includes(require('../package.json').version));
+    assert.equal(calls, 0);
+    const button = document.querySelector('.dccon-update button');
+    await click(button);
+    assert.equal(button.disabled, true);
+    await click(button); assert.equal(calls, 1);
+    await React.act(async () => {finish({status: 403});});
+    assert.match(document.querySelector('.dccon-update [role="status"]').textContent, /조회가 제한/);
+    assert.equal(button.disabled, false);
+    await click(button); assert.equal(calls, 2);
+    await React.act(async () => {finish({status: 200, text: async () => JSON.stringify([{tag_name: 'v99.0.0'}])});});
+    assert.match(document.querySelector('.dccon-update [role="status"]').textContent, /업데이트할 수 있습니다.*v99.0.0/);
+    assert.equal(JSON.stringify(data), before);
+    assert.deepEqual(errors, []);
+  });
+});
+
+test('closing settings aborts the pending update check', async () => {
+  await scenario('discord-dccon.plugin.js', [], async ({root, DCConSettingsPanel, platform, click, errors}) => {
+    let signal;
+    platform.net.fetch = (_, options) => {
+      signal = options.signal;
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(Error('aborted')), {once: true}));
+    };
+    await React.act(async () => root.render(React.createElement(DCConSettingsPanel, {section: 'settings'})));
+    await click(document.querySelector('.dccon-update button'));
+    await React.act(async () => root.render(React.createElement(DCConSettingsPanel)));
+    assert.equal(signal.aborted, true);
+    assert.deepEqual(errors, []);
   });
 });
 
