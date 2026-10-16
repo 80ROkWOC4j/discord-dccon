@@ -148,11 +148,11 @@ export async function embeddingWorker() {
           const options = {revision: "daa72c51243991dfcaf9f9137d2c573d8f7790c0"};
           const name = "onnx-community/embeddinggemma-2-ONNX";
           processor = await lib.AutoProcessor.from_pretrained(name, options);
-          processor.image_processor.max_soft_tokens = 560;
-          processor.video_processor.frame_processor.max_soft_tokens = 280;
+          processor.image_processor.max_soft_tokens = 280;
+          processor.video_processor.frame_processor.max_soft_tokens = 140;
           processor.video_processor.max_frames = 6;
           const config = await lib.AutoConfig.from_pretrained(name, options); config.audio_config = null;
-          model = await lib.AutoModel.from_pretrained(name, {...options, config, device: "webgpu", dtype: "q8"});
+          model = await lib.AutoModel.from_pretrained(name, {...options, config, device: "webgpu", dtype: "q4"});
           result = {device: "webgpu"};
         } else if (data.action === "image") {
           const decoded = await decode(data.bytes, data.type);

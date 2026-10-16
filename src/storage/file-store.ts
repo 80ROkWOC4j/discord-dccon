@@ -80,14 +80,14 @@ async function migrateVectors(ctx: MigrationContext, source: string, legacyRoot:
   let saved: {spec: string; vectors?: Record<string, unknown>} | undefined;
   try {saved = JSON.parse(await ctx.fs.readFile(source, 'utf8'));}
   catch { /* Preserve an unreadable legacy index in the migration backup. */ }
-  if (saved && [ctx.vectorSpec, 'q8-560-gif3-browser-v1'].includes(saved.spec) && saved.vectors) {
+  if (saved && [ctx.vectorSpec, 'q8-image560-video6x280-v2', 'q8-560-gif3-browser-v1'].includes(saved.spec) && saved.vectors) {
     for (const [key, vector] of Object.entries(saved.vectors)) {
-      if (!validVector(vector) || (saved.spec !== ctx.vectorSpec && key.endsWith(':gif'))) continue;
-      const target = path.join(ctx.cacheRoot, 'vectors', ctx.vectorSpec, digest(key) + '.json');
+      if (!validVector(vector) || (saved.spec === 'q8-560-gif3-browser-v1' && key.endsWith(':gif'))) continue;
+      const target = path.join(ctx.cacheRoot, 'vectors', saved.spec, digest(key) + '.json');
       let current: {spec?: string; key?: string; vector?: unknown} | undefined;
       try {current = JSON.parse(await ctx.fs.readFile(target, 'utf8'));} catch { /* Write a missing or invalid vector. */ }
-      if (current?.spec === ctx.vectorSpec && current.key === key && validVector(current.vector)) continue;
-      await atomicJSON(ctx, target, {spec: ctx.vectorSpec, key, vector});
+      if (current?.spec === saved.spec && current.key === key && validVector(current.vector)) continue;
+      await atomicJSON(ctx, target, {spec: saved.spec, key, vector});
       ctx.report.vectors++;
     }
   }

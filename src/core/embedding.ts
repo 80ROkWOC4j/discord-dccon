@@ -7,11 +7,13 @@ import type {Packs} from './packs.ts';
 import type {Images} from './images.ts';
 import type {Events} from './events.ts';
 import {embeddingWorker} from './workers.ts';
-export const EMBEDDING_SPEC = "q8-image560-video6x280-v2";
+export const EMBEDDING_SPEC = "q4-image280-video6x140-v3";
+// These revisions share the same normalized 768-dimensional embedding space.
+const COMPATIBLE_SPECS = [EMBEDDING_SPEC, "q8-image560-video6x280-v2", "q8-560-gif3-browser-v1"];
 export function readEmbeddingVectors(saved: {spec?: string; vectors?: Record<string, unknown>} | undefined): VectorMap {
-  if (!["q8-560-gif3-browser-v1", EMBEDDING_SPEC].includes(saved?.spec!) || !saved?.vectors) return {};
+  if (!COMPATIBLE_SPECS.includes(saved?.spec!) || !saved?.vectors) return {};
   return Object.fromEntries(Object.entries(saved.vectors).filter(([key, vector]) =>
-    (saved.spec === EMBEDDING_SPEC || !key.endsWith(":gif")) && Array.isArray(vector) &&
+    (saved.spec !== "q8-560-gif3-browser-v1" || !key.endsWith(":gif")) && Array.isArray(vector) &&
     vector.length === 768 && vector.every(Number.isFinite) && Math.abs(Math.hypot(...vector) - 1) < 0.001)) as VectorMap;
 }
 
@@ -204,11 +206,17 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
             const key = this.key(con);
             if (!this.vectors[key]) {
               let vector;
-              try {
-                const saved = JSON.parse(await this.files().readFile(this.vectorFile(key), "utf8"));
-                if (saved.key === key && saved.spec === EMBEDDING_SPEC)
-                  vector = readEmbeddingVectors({spec: saved.spec, vectors: {[key]: saved.vector}})[key];
-              } catch { /* Missing or invalid per-image vector. */ }
+              for (const spec of COMPATIBLE_SPECS) {
+                try {
+                  const file = spec === EMBEDDING_SPEC ? this.vectorFile(key)
+                    : cachePath("vectors", spec, platform.sha256(key) + ".json");
+                  const saved = JSON.parse(await this.files().readFile(file, "utf8"));
+                  if (saved.key === key && saved.spec === spec)
+                    vector = readEmbeddingVectors({spec: saved.spec, vectors: {[key]: saved.vector}})[key];
+                } catch { /* Missing or invalid per-image vector. */ }
+                if (generation !== this.generation) return;
+                if (vector) break;
+              }
               if (generation !== this.generation) return;
               if (!vector) {
                 vector = this.legacyVectors[key];
@@ -219,8 +227,8 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
                   if (generation !== this.generation) return;
                   vector = await this.call("image", {bytes, type: file.type}) as number[];
                   if (generation !== this.generation) return;
+                  this.pendingVectorKeys.add(key); this.dirtyVectors = this.pendingVectorKeys.size;
                 }
-                this.pendingVectorKeys.add(key); this.dirtyVectors = this.pendingVectorKeys.size;
               }
               this.vectors[key] = vector;
             }

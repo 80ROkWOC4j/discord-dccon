@@ -87,6 +87,24 @@ test('v2 moves caches, archives differences, converts vectors and absorbs old ma
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(cache, 'vectors', spec, hash('a:png') + '.json'), 'utf8')), {spec, key: 'a:png', vector});
   assert.equal(JSON.parse(await fs.readFile(path.join(options.root, 'migration-backup', 'cache-migration.json'), 'utf8')).version, 2);
 });
+for (const previousSpec of ['q8-image560-video6x280-v2', 'q8-560-gif3-browser-v1']) {
+  test(`migration preserves ${previousSpec} provenance when the active model is q4`, async t => {
+    const options = await fixture(t);
+    options.vectorSpec = 'q4-image280-video6x140-v3';
+    const old = path.join(path.dirname(options.root), 'BetterDiscord', 'plugins', 'discord-dccon-cache');
+    const vector = Array(768).fill(0); vector[0] = 1;
+    await write(path.join(old, 'embedding-gemma2', 'vectors-v1.json'), JSON.stringify({spec: previousSpec,
+      vectors: {'a:png': vector, 'b:gif': vector}}));
+    await createConfigStore(options).open();
+    const directory = path.join(options.root, 'cache', 'vectors', previousSpec);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory, hash('a:png') + '.json'), 'utf8')),
+      {spec: previousSpec, key: 'a:png', vector});
+    if (previousSpec === 'q8-560-gif3-browser-v1') await missing(path.join(directory, hash('b:gif') + '.json'));
+    else assert.equal(JSON.parse(await fs.readFile(path.join(directory, hash('b:gif') + '.json'), 'utf8')).spec, previousSpec);
+    await missing(path.join(options.root, 'cache', 'vectors', options.vectorSpec));
+  });
+}
+
 test('personal library is shared, duplicates removed and conflicts preserved', async t => {
   const options = await fixture(t), appData = path.dirname(options.root), a = 'a'.repeat(64), b = 'b'.repeat(64);
   const bd = path.join(appData, 'BetterDiscord', 'plugins', 'discord-dccon-library');

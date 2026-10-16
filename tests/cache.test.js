@@ -190,7 +190,50 @@ test("different registered packs share per-image vectors without removing or ove
   next.Embedding.call = async () => vector;
   assert.deepEqual(Array.from(await next.Embedding.search("query"), (r) => r.con.path), ["b"]);
 });
-test("legacy vector JSON migrates through startup without running image inference", async (t) => {
+test("q4 indexing reuses q8 vectors in place and saves only new images in the q4 namespace", async (t) => {
+  const {root, cache} = fixture(t), h = runtime(root, cache, {dccons: pack(['old', 'new'])});
+  const e = h.Embedding, spec = 'q8-image560-video6x280-v2';
+  const file = path.join(cache, 'vectors', spec, path.basename(e.vectorFile('old:png')));
+  const saved = JSON.stringify({spec, key: 'old:png', vector});
+  fs.mkdirSync(path.dirname(file), {recursive: true}); fs.writeFileSync(file, saved);
+  let calls = 0;
+  e.ready = true;
+  h.setImageLoader(async con => {
+    assert.equal(con.path, 'new');
+    return {type: 'image/png', arrayBuffer: async () => new ArrayBuffer(1)};
+  });
+  e.call = async () => {calls++; return vector.slice();};
+  await e.index();
+  assert.equal(e.status.phase, '준비 완료');
+  assert.equal(calls, 1);
+  assert.deepEqual(Object.keys(e.vectors), ['old:png', 'new:png']);
+  assert.equal(fs.readFileSync(file, 'utf8'), saved);
+  assert.equal(fs.existsSync(e.vectorFile('old:png')), false);
+  assert.equal(JSON.parse(fs.readFileSync(e.vectorFile('new:png'), 'utf8')).spec, 'q4-image280-video6x140-v3');
+  const next = runtime(root, cache, {dccons: pack(['old', 'new'])});
+  next.Embedding.ready = true;
+  next.setImageLoader(async () => {throw Error('must reuse both caches');});
+  await next.Embedding.index();
+  assert.equal(next.Embedding.status.phase, '준비 완료');
+  assert.equal(Object.keys(next.Embedding.vectors).length, 2);
+});
+
+test("q4 cache takes precedence over a compatible q8 cache", async (t) => {
+  const {root, cache} = fixture(t), h = runtime(root, cache, {dccons: pack(['a'])});
+  const e = h.Embedding, q4 = vector.slice(); q4[0] = 0; q4[1] = 1;
+  for (const [spec, values] of [['q8-image560-video6x280-v2', vector], ['q4-image280-video6x140-v3', q4]]) {
+    const file = path.join(cache, 'vectors', spec, path.basename(e.vectorFile('a:png')));
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.writeFileSync(file, JSON.stringify({spec, key: 'a:png', vector: values}));
+  }
+  e.ready = true;
+  h.setImageLoader(async () => {throw Error('must reuse q4 cache');});
+  await e.index();
+  assert.equal(e.status.phase, '준비 완료');
+  assert.deepEqual(Array.from(e.vectors['a:png']), q4);
+});
+
+test("legacy vector JSON is reused without relabelling it as q4 or running image inference", async (t) => {
   const { root, cache } = fixture(t), old = path.join(root, "old"), file = path.join(old, "discord-dccon-cache", "embedding-gemma2", "vectors-v1.json");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const saved = JSON.stringify({ spec: "q8-image560-video6x280-v2", vectors: { "a:png": vector } });
@@ -209,7 +252,8 @@ test("legacy vector JSON migrates through startup without running image inferenc
   });
   await h.Embedding.runStart();
   assert.equal(h.Embedding.status.phase, "준비 완료");
-  assert.ok(fs.existsSync(h.Embedding.vectorFile("a:png")));
+  assert.equal(fs.existsSync(h.Embedding.vectorFile("a:png")), false);
+  assert.deepEqual(Array.from(h.Embedding.vectors["a:png"]), vector);
   assert.equal(fs.readFileSync(file, "utf8"), saved);
   h.Embedding.stop();
 });
@@ -228,6 +272,6 @@ test("a malformed or mismatched vector is rebuilt within its model namespace", a
   await e.index();
   assert.equal(calls, 1);
   const saved = JSON.parse(fs.readFileSync(e.vectorFile("a:png"), "utf8"));
-  assert.equal(saved.spec, "q8-image560-video6x280-v2");
+  assert.equal(saved.spec, "q4-image280-video6x140-v3");
   assert.deepEqual(saved.vector, vector);
 });
