@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const {spawn} = require('node:child_process');
-const {createConfigStore} = require('../scripts/shared-storage.cjs');
+const {createConfigStore} = require('../src/storage/node.ts');
 const spec = 'q8-image560-video6x280-v2';
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 const con = name => ({path: name, ext: 'png', title: name});
@@ -161,7 +161,7 @@ test('independent Node processes save to one config without losing simultaneous 
     }catch(error){console.error(error);process.exit(1);}});
     process.send('ready');`;
   const children = ['stable','canary'].map(name => spawn(process.execPath,
-    ['-e', program, require.resolve('../scripts/shared-storage.cjs'), options.root, name], {stdio:['ignore','ignore','pipe','ipc']}));
+    ['-e', program, require.resolve('../src/storage/node.ts'), options.root, name], {stdio:['ignore','ignore','pipe','ipc']}));
   t.after(() => {for (const child of children) if (child.exitCode === null) child.kill();});
   const completed = children.map(child => new Promise((resolve,reject) => {
     let stderr = ''; child.stderr.on('data', bytes => {stderr += bytes;});
@@ -195,4 +195,25 @@ test('stat-only filesystem shims cannot move cache or library links outside lega
     await assert.rejects(createConfigStore({...options, fs: backend}).open(), /Symbolic links|escapes/);
     assert.equal(await fs.readFile(source, 'utf8'), 'original'); assert.equal((await state(options.root)).version, 1);
   }
+});
+
+test('compiled standalone storage loads as CommonJS and preserves the source store format', async t => {
+  const options = await fixture(t);
+  const file = path.join(path.dirname(options.root), 'shared-storage.cjs');
+  await fs.writeFile(file, require('../scripts/build.cjs').buildStorage());
+  const compiled = require(file);
+  t.after(() => {delete require.cache[file];});
+  const store = compiled.createConfigStore(options);
+  const initial = await store.open({favorites: [con('first')]});
+  await store.save('favorites', [con('second')], initial.settings.favorites);
+  assert.deepEqual(await createConfigStore(options).open(), {version: 2, settings: {favorites: [con('second')]}});
+});
+
+test('shared merge policy is directly importable and preserves concurrent additions without mutating inputs', () => {
+  const {mergeSetting} = require('../src/storage/merge.ts');
+  const before = Object.freeze([Object.freeze(con('removed'))]);
+  const next = Object.freeze([Object.freeze(con('added'))]);
+  const current = Object.freeze([...before, Object.freeze(con('other-tab'))]);
+  assert.deepEqual(mergeSetting('favorites', before, next, current), [con('added'), con('other-tab')]);
+  assert.deepEqual(current, [con('removed'), con('other-tab')]);
 });

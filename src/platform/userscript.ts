@@ -1,29 +1,26 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import * as ReactDOMClient from 'react-dom/client';
-import {createUserscriptNative} from '../userscript/native.js';
-import {createComposerBridge} from '../userscript/composer.js';
-import {createConfig} from '../userscript/config.js';
-import {createNativeRequire, createNativeServices} from './native.ts';
+import {createUserscriptNative} from '../../userscript/native.js';
+import {createComposerBridge} from '../../userscript/composer.js';
+import {createConfig} from '../storage/indexeddb.ts';
+import {createNativeServices} from './native.ts';
 import {createLocaleStore} from './locale.ts';
 import type {Composer, Configuration, NativeBridge, Platform, PlatformHandle, Settings} from './types.ts';
 
-export function createUserscriptPlatform({page, request, load, storageSource}: {
+export function createUserscriptPlatform({page, request, load}: {
   page: Window & typeof globalThis;
   request: Parameters<typeof createUserscriptNative>[0];
   load(key: string, fallback: unknown): unknown;
-  storageSource: string;
 }): PlatformHandle {
   const native = createUserscriptNative(request);
   const bridge = native as Omit<NativeBridge, 'config'>;
   const services = createNativeServices(bridge, '/dccon/cache');
   const initialData = load('data', {dccons: load('packs', [])}) as Settings;
-  const shared = {exports: {} as {mergeSetting: Parameters<typeof createConfig>[1]}};
-  new Function('require', 'module', storageSource)(createNativeRequire(bridge), shared);
-  const settings = createConfig(page.indexedDB, shared.exports.mergeSetting);
+  const settings = createConfig(page.indexedDB);
   const config: Configuration = {
-    open: () => settings.config('open', [initialData]) as ReturnType<Configuration['open']>,
-    save: (...args) => settings.config('save', args) as ReturnType<Configuration['save']>,
+    open: () => settings.config('open', [initialData]),
+    save: (...args) => settings.config('save', args),
   };
   const composer = createComposerBridge(page, document) as Composer & {dispose(): void};
   const channelId = () => location.pathname.match(/^\/channels\/[^/]+\/(\d+)$/)?.[1];

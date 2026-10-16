@@ -11,5 +11,5 @@
     "types": ["node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["platform/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

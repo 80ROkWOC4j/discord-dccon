@@ -46,9 +46,9 @@ SOFTWARE.
 
 # Bundled split worker
 
-The generated worker in discord-dccon.plugin.js is rebuilt with `npm run build:split-worker` from scripts/split-worker.js. It uses @jsquash/webp 1.5.0 (Apache-2.0) for lossless pixel encoding and node-webpmux 3.2.1 (LGPL-3.0-or-later) for in-memory animation assembly. The encoder WASM is pinned and SHA-256 verified on first download.
+The generated worker in discord-dccon.plugin.js is rebuilt with `npm run build:plugin` from src/core/split-worker.ts. It uses @jsquash/webp 1.5.0 (Apache-2.0) for lossless pixel encoding and node-webpmux 3.2.1 (LGPL-3.0-or-later) for in-memory animation assembly. The encoder WASM is pinned and SHA-256 verified on first download.
 
-Sources and modification/build entry points: https://github.com/jamsinclair/jSquash/tree/main/packages/webp ; https://github.com/ApeironTsuka/node-webpmux ; scripts/split-worker.js and scripts/build-split-worker.cjs in this repository. The bundled library sources are unmodified; esbuild bundles and minifies them with a Buffer shim and browser-only filesystem selection. The project GPL-3.0 license is included in LICENSE.
+Sources and modification/build entry points: https://github.com/jamsinclair/jSquash/tree/main/packages/webp ; https://github.com/ApeironTsuka/node-webpmux ; src/core/split-worker.ts and scripts/build.cjs in this repository. The bundled library sources are unmodified; esbuild bundles and minifies them with a Buffer shim and browser-only filesystem selection. The project GPL-3.0 license is included in LICENSE.
 
 ## @jsquash/webp license
 

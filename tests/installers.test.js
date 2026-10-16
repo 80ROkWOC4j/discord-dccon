@@ -141,7 +141,7 @@ test('BetterDiscord package changes only the plugin and retains previous plugin'
   const backups = (await fs.readdir(plugins)).filter(name => name.includes('.backup-'));
   assert.equal(backups.length, 1);
   assert.equal(await fs.readFile(path.join(plugins, backups[0]), 'utf8'), 'old plugin');
-  assert.equal(await fs.readFile(path.join(plugins, 'discord-dccon.plugin.js'), 'utf8'), await fs.readFile(path.join(repo, 'discord-dccon.plugin.js'), 'utf8'));
+  assert.equal(await fs.readFile(path.join(plugins, 'discord-dccon.plugin.js'), 'utf8'), await fs.readFile(require('../scripts/build.cjs').pluginPath, 'utf8'));
 });
 
 test('online command installs both modes on Windows PowerShell 5.1 and rejects corrupt downloads', {skip: process.platform !== 'win32'}, async t => {

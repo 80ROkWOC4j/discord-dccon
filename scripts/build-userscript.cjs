@@ -1,22 +1,9 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const {build} = require('esbuild');
 const {version} = require('../package.json');
 const root = path.resolve(__dirname, '..');
 async function main() {
-  require('../scripts/build-split-worker.cjs');
-  const result = await build({absWorkingDir: root, tsconfigRaw: {}, stdin: {contents: `const {start}=require('./userscript/attach-poc');
-const boot=()=>start({page:unsafeWindow,request:GM_xmlhttpRequest,load:GM_getValue});
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();`, resolveDir: root},
-    bundle: true, write: false, format: 'iife', platform: 'browser',
-    define: {'process.env.NODE_ENV': '"production"'},
-    plugins: [{name: 'shared-plugin-text', setup(builder) {
-      builder.onLoad({filter: /(?:discord-dccon\.plugin\.js|shared-storage\.cjs)$/}, async args => {
-        const source = await fs.readFile(args.path, 'utf8');
-        return {contents: args.path.endsWith('discord-dccon.plugin.js')
-          ? require('../scripts/platform-build.cjs').coreSource(source) : source, loader: 'text'};
-      });
-    }}]});
+  const source = require('./build.cjs').buildEntry('userscript');
   const metadata = `// ==UserScript==
 // @name discord-dccon Attach PoC
 // @namespace https://github.com/80ROkWOC4j/discord-dccon
@@ -43,7 +30,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
   await fs.mkdir(path.dirname(output), {recursive: true});
   const reactLicense = await fs.readFile(path.join(root, 'node_modules/react/LICENSE'), 'utf8');
   const hashLicense = await fs.readFile(path.join(root, 'node_modules/@noble/hashes/LICENSE'), 'utf8');
-  await fs.writeFile(output, metadata + `/* React / ReactDOM / Scheduler license:\n${reactLicense}\n\n@noble/hashes license:\n${hashLicense}\n*/\n` + result.outputFiles[0].text);
+  await fs.writeFile(output, metadata + `/* React / ReactDOM / Scheduler license:\n${reactLicense}\n\n@noble/hashes license:\n${hashLicense}\n*/\n` + source);
   for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md'])
     await fs.copyFile(path.join(root, file), path.join(path.dirname(output), file));
   await fs.copyFile(path.join(root, 'node_modules/@noble/hashes/LICENSE'), path.join(path.dirname(output), 'noble-hashes-LICENSE.txt'));

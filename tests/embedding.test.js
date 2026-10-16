@@ -1,8 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const vm = require('node:vm');
-const path = require('node:path');
 
 function runtime(initial = {}, fetch = undefined, globals = {}) {
   const data = {...initial};
@@ -10,7 +8,7 @@ function runtime(initial = {}, fetch = undefined, globals = {}) {
     BdApi: {Logger: {error() {}}, Net: {fetch}, Data: {load: (_, key) => data[key], save: (_, key, value) => {data[key] = value;}},
       React: {Component: class {constructor(props) {this.props = props;} setState(value) {Object.assign(this.state, value);}}},
       Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
     '\nmodule.exports = {Embedding, DCConPanel, readEmbeddingVectors, setImageLoader: loader => {getDCConImage = loader;}};', context);
   return {...context.module.exports, data};
 }

@@ -21,7 +21,7 @@ function runtime(folder, cacheFolder, data = {}, extra = {}) {
     } }, React: { Component: class {
     } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }
   };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../discord-dccon.plugin.js"), "utf8") + "\nmodule.exports={appDataDirectory:(os,env,home)=>DCConPlatformAdapters.appDataDirectory(os,env,home,platform.paths.join),cachePath,readCacheFile,writeCacheFile,SharedConfig,getDCConImage,Embedding,WebPCache,loadData,saveData,setImageLoader:value=>{getDCConImage=value;}};", context);
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + "\nmodule.exports={appDataDirectory:(os,env,home)=>DCConPlatformAdapters.appDataDirectory(os,env,home,platform.paths.join),cachePath,readCacheFile,writeCacheFile,SharedConfig,getDCConImage,Embedding,WebPCache,loadData,saveData,setImageLoader:value=>{getDCConImage=value;}};", context);
   return { ...context.module.exports, context };
 }
 function fixture(t) {
@@ -95,7 +95,7 @@ test("cancelled model saves clean up the complete temporary file", async t => {
 
 test("rapid shared setting saves keep newer optimistic edits and do not update the legacy store", async t => {
   const {root, cache} = fixture(t), legacy = {favorites: []}, h = runtime(root, cache, legacy);
-  const {createConfigStore} = require('../scripts/shared-storage.cjs');
+  const {createConfigStore} = require('../src/storage/node.ts');
   const store = createConfigStore({root, vectorSpec: 'q8-image560-video6x280-v2'});
   let entered, finish;
   const ready = new Promise(resolve => {entered = resolve;});

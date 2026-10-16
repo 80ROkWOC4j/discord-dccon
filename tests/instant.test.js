@@ -62,7 +62,7 @@ function harness({attachFiles, uploadFails = false, postFails = false, missing =
     Net: {fetch: async () => { calls.fetches++; if (fetchFails) throw new Error('offline'); return {arrayBuffer: async () => new Uint8Array(downloadBytes).buffer}; }},
     UI: {showToast: text => calls.errors.push(text)}, Logger: {error() {}},
   }};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
     // Conversion itself is exercised with real WASM in webp.test.js; send tests use byte fixtures.
     '\nWebPCache.convert = async bytes => bytes; module.exports = {WebPCache, sendDCConMessage, inspectInstantSend, events: PluginEvents, activeQueue, removeBuffered, getDCConImage, setChannel: id => {currentChannelId = id;}};', context);
   if (splitImage) { context.splitImageForTest = splitImage; vm.runInNewContext("splitImageIntoNine = splitImageForTest;", context); }

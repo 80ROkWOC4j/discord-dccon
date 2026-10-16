@@ -3,11 +3,15 @@ import type * as ReactDOM from 'react-dom';
 import type * as ReactDOMClient from 'react-dom/client';
 
 export type Settings = Record<string, unknown>;
-export interface ConfigurationResult {
+export interface ConfigurationSnapshot {
   settings: Settings;
   version?: number;
-  error?: {message: string; code?: string};
+  error?: never;
 }
+export type ConfigurationResult = ConfigurationSnapshot | {
+  error: {message: string; code?: string};
+  settings?: never;
+};
 export interface Configuration {
   open(): Promise<ConfigurationResult>;
   save(key: string, value: unknown, before: unknown): Promise<ConfigurationResult>;

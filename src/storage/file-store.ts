@@ -1,52 +1,55 @@
-const path = require('path');
-const crypto = require('crypto');
+import {mergeSetting} from './merge.ts';
+import type {Settings, Configuration, StorageFilesystem, StorageEnvironment, StoreOptions, MigrationContext, Migrations, ConfigStore} from './types.ts';
 
-function digest(bytes) {return crypto.createHash('sha256').update(bytes).digest('hex');}
-function validVector(vector) {
+function validVector(vector: unknown): vector is number[] {
   return Array.isArray(vector) && vector.length === 768 && vector.every(Number.isFinite) &&
     Math.abs(Math.hypot(...vector) - 1) < 0.001;
 }
-async function readConfig(fs, root) {
+async function readConfig(ctx: MigrationContext) {
+  const {fs, root, path} = ctx;
   let text;
   try {text = await fs.readFile(path.join(root, 'config.json'), 'utf8');}
-  catch (error) {if (error.code === 'ENOENT') return null; throw error;}
-  const state = JSON.parse(text);
+  catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code === 'ENOENT') return null; throw error;}
+  const state = JSON.parse(text) as Configuration;
   if (!Number.isInteger(state.version) || state.version < 1 || !state.settings || typeof state.settings !== 'object' || Array.isArray(state.settings))
     throw Error('Invalid shared configuration');
   return state;
 }
-async function atomicJSON(ctx, file, value) {
+async function atomicJSON(ctx: MigrationContext, file: string, value: unknown) {
+  const {path} = ctx;
   await ctx.fs.mkdir(path.dirname(file), {recursive: true});
   const temporary = file + '.tmp-' + ctx.token + '-' + ++ctx.sequence;
   try {
     await ctx.fs.writeFile(temporary, JSON.stringify(value));
     await rename(ctx.fs, temporary, file);
-  } catch (error) {
+  } catch (_error) { const error = _error as NodeJS.ErrnoException;
     try {await ctx.fs.unlink(temporary);} catch { /* Keep the previously committed state. */ }
     throw error;
   }
 }
-async function rename(fs, source, target) {
+async function rename(fs: StorageFilesystem, source: string, target: string) {
   for (let attempt = 0; ; attempt++) {
     try {return await fs.rename(source, target);}
-    catch (error) {
-      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error;
+    catch (_error) { const error = _error as NodeJS.ErrnoException;
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code!) || attempt >= 4) throw error;
       await new Promise(resolve => setTimeout(resolve, 25 * (attempt + 1)));
     }
   }
 }
-async function exists(fs, file) {
-  try {await fs.stat(file); return true;} catch (error) {if (error.code === 'ENOENT') return false; throw error;}
+async function exists(fs: StorageFilesystem, file: string) {
+  try {await fs.stat(file); return true;} catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code === 'ENOENT') return false; throw error;}
 }
-function within(root, file) {
+function within(ctx: MigrationContext, root: string, file: string) {
+  const {path} = ctx;
   const relative = path.relative(root, file);
   if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw Error('Migration path escapes cache root');
 }
-async function moveFile(ctx, source, target) {
-  within(ctx.root, target);
+async function moveFile(ctx: MigrationContext, source: string, target: string) {
+  const {path} = ctx;
+  within(ctx, ctx.root, target);
   await ctx.fs.mkdir(path.dirname(target), {recursive: true});
   try {await ctx.fs.rename(source, target);}
-  catch (error) {
+  catch (_error) { const error = _error as NodeJS.ErrnoException;
     if (error.code !== 'EXDEV') throw error;
     const temporary = target + '.tmp-' + ctx.token + '-' + ++ctx.sequence;
     try {
@@ -55,14 +58,15 @@ async function moveFile(ctx, source, target) {
       if (await ctx.hashFile(source) !== await ctx.hashFile(temporary)) throw Error('Migration copy verification failed');
       await ctx.fs.rename(temporary, target);
       await ctx.fs.unlink(source);
-    } catch (copyError) {
+    } catch (_copyError) { const copyError = _copyError as NodeJS.ErrnoException;
       try {await ctx.fs.unlink(temporary);} catch { /* Retain the source on failure. */ }
       throw copyError;
     }
   }
   ctx.report.moved++;
 }
-async function archiveFile(ctx, source, legacyRoot, relative) {
+async function archiveFile(ctx: MigrationContext, source: string, legacyRoot: string, relative: string) {
+  const {path, digest} = ctx;
   const archive = path.join(ctx.cacheRoot, 'migration-backup', 'v2', digest(legacyRoot), relative);
   if (await exists(ctx.fs, archive)) {
     const hash = await ctx.hashFile(source);
@@ -71,15 +75,16 @@ async function archiveFile(ctx, source, legacyRoot, relative) {
   } else await moveFile(ctx, source, archive);
   ctx.report.archived++;
 }
-async function migrateVectors(ctx, source, legacyRoot, relative) {
-  let saved;
+async function migrateVectors(ctx: MigrationContext, source: string, legacyRoot: string, relative: string) {
+  const {path, digest} = ctx;
+  let saved: {spec: string; vectors?: Record<string, unknown>} | undefined;
   try {saved = JSON.parse(await ctx.fs.readFile(source, 'utf8'));}
   catch { /* Preserve an unreadable legacy index in the migration backup. */ }
   if (saved && [ctx.vectorSpec, 'q8-560-gif3-browser-v1'].includes(saved.spec) && saved.vectors) {
     for (const [key, vector] of Object.entries(saved.vectors)) {
       if (!validVector(vector) || (saved.spec !== ctx.vectorSpec && key.endsWith(':gif'))) continue;
       const target = path.join(ctx.cacheRoot, 'vectors', ctx.vectorSpec, digest(key) + '.json');
-      let current;
+      let current: {spec?: string; key?: string; vector?: unknown} | undefined;
       try {current = JSON.parse(await ctx.fs.readFile(target, 'utf8'));} catch { /* Write a missing or invalid vector. */ }
       if (current?.spec === ctx.vectorSpec && current.key === key && validVector(current.vector)) continue;
       await atomicJSON(ctx, target, {spec: ctx.vectorSpec, key, vector});
@@ -88,19 +93,20 @@ async function migrateVectors(ctx, source, legacyRoot, relative) {
   }
   await archiveFile(ctx, source, legacyRoot, relative);
 }
-async function migration_v2(ctx) {
+export async function migration_v2(ctx: MigrationContext) {
+  const {path} = ctx;
   for (const legacyRoot of ctx.legacyRoots) {
     if (!['discord-dccon-cache', 'DCCon-cache'].includes(path.basename(legacyRoot))) throw Error('Unexpected legacy cache directory');
     if (legacyRoot === ctx.cacheRoot) throw Error('Legacy and current cache directories must differ');
-    let realRoot;
-    async function visit(directory) {
-      within(legacyRoot, directory);
-      let entries;
+    let realRoot: string;
+    async function visit(directory: string): Promise<void> {
+      within(ctx, legacyRoot, directory);
+      let entries: string[];
       try {entries = await ctx.fs.readdir(directory);}
-      catch (error) {if (error.code === 'ENOENT') return; throw error;}
+      catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code === 'ENOENT') return; throw error;}
       for (const name of entries.sort()) {
         const source = path.join(directory, name), info = await ctx.fs.lstat(source);
-        within(legacyRoot, source);
+        within(ctx, legacyRoot, source);
         if (info.isSymbolicLink()) throw Error('Symbolic links in legacy cache require manual migration');
         // BetterDiscord's lstat shim follows links. Native Node lstat already
         // detects them and avoids false positives from Windows file virtualization.
@@ -119,7 +125,7 @@ async function migration_v2(ctx) {
         let target;
         if (parts.length === 1 && /^[a-f0-9]{64}$/.test(name)) target = path.join(ctx.cacheRoot, 'images', name);
         if (parts.length === 2 && /^[a-f0-9]{64}$/.test(name)) {
-          const category = {merged: 'merged', 'webp-codecs': 'webp-codecs', 'embedding-gemma2': 'models'}[parts[0]];
+          const category = ({merged: 'merged', 'webp-codecs': 'webp-codecs', 'embedding-gemma2': 'models'} as Record<string, string>)[parts[0]];
           if (category) target = path.join(ctx.cacheRoot, category, name);
         }
         if (!target) {await archiveFile(ctx, source, legacyRoot, relative); continue;}
@@ -144,7 +150,7 @@ async function migration_v2(ctx) {
     }
   }
 }
-function defaultLegacyRoots(cacheRoot) {
+function defaultLegacyRoots(cacheRoot: string, path: StorageEnvironment["path"]) {
   const appData = path.dirname(path.dirname(cacheRoot));
   return [path.join(appData, 'BetterDiscord', 'plugins', 'discord-dccon-cache'),
     path.join(appData, 'discord-dccon', 'discord-dccon-cache'),
@@ -153,13 +159,13 @@ function defaultLegacyRoots(cacheRoot) {
 }
 
 // Electron's contextBridge drops Error.code from BetterDiscord's fs shim.
-function normalizeFS(backend) {
+export function normalizeFS<T extends StorageFilesystem>(backend: T): T {
   return new Proxy(backend, {get(target, key) {
-    const method = target[key];
+    const method = Reflect.get(target, key);
     if (typeof method !== 'function') return method;
-    return async (...args) => {
+    return async (...args: unknown[]) => {
       try {return await method.apply(target, args);}
-      catch (error) {
+      catch (_error) { const error = _error as NodeJS.ErrnoException;
         if (!error.code) {
           const code = /(?:^|Error: )(E[A-Z0-9]+):/.exec(error.message)?.[1];
           if (code) error.code = code;
@@ -169,45 +175,17 @@ function normalizeFS(backend) {
     };
   }});
 }
-const listKeys = new Set(['dccons', 'favorites', 'recent', 'personalCons']);
-function itemKey(key, item) {
-  return key === 'dccons' ? String(item.info.package_idx) : item.path + ':' + item.ext;
-}
-function same(a, b) {return JSON.stringify(a) === JSON.stringify(b);}
-function mergeSetting(key, before, next, current) {
-  if (listKeys.has(key) && Array.isArray(next)) {
-    const previous = new Map((before || []).map(item => [itemKey(key, item), item]));
-    const desired = new Map(next.map(item => [itemKey(key, item), item]));
-    const latest = new Map((current || []).map(item => [itemKey(key, item), item]));
-    for (const id of previous.keys()) if (!desired.has(id)) latest.delete(id);
-    const ordered = new Map();
-    for (const [id, item] of desired) {
-      if (!previous.has(id) || !same(previous.get(id), item)) latest.set(id, item);
-      if (latest.has(id)) ordered.set(id, latest.get(id));
-    }
-    for (const [id, item] of latest) if (!ordered.has(id)) ordered.set(id, item);
-    return [...ordered.values()];
-  }
-  if (key === 'collapsedPacks' && next && typeof next === 'object') {
-    const result = {...current};
-    for (const name of new Set([...Object.keys(before || {}), ...Object.keys(next)])) {
-      if (same(before?.[name], next[name])) continue;
-      if (Object.hasOwn(next, name)) result[name] = next[name]; else delete result[name];
-    }
-    return result;
-  }
-  return next;
-}
-async function importSettings(ctx, preferred) {
+async function importSettings(ctx: MigrationContext, preferred: Settings) {
+  const {path, digest} = ctx;
   const appData = path.dirname(ctx.root), legacy = ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins');
   const sources = [path.join(legacy, 'discord-dccon.config.json'),
     path.join(appData, 'discord-dccon-canary', 'discord-dccon.config.json'),
     path.join(appData, 'discord-dccon', 'discord-dccon.config.json')];
-  const settings = {};
+  const settings: Settings = {};
   for (const source of sources) {
     let raw;
     try {raw = await ctx.fs.readFile(source, 'utf8');}
-    catch (error) {if (error.code === 'ENOENT') continue; throw error;}
+    catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code === 'ENOENT') continue; throw error;}
     const value = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid legacy settings');
     await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', digest(source) + '.json'), value);
@@ -219,7 +197,8 @@ async function importSettings(ctx, preferred) {
     await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', 'imported-' + digest(JSON.stringify(preferred)) + '.json'), preferred);
   return settings;
 }
-async function migrateLibrary(ctx) {
+async function migrateLibrary(ctx: MigrationContext) {
+  const {path, digest} = ctx;
   const appData = path.dirname(ctx.root), destination = path.join(ctx.root, 'discord-dccon-library');
   const roots = [path.join(ctx.options.legacyPluginsRoot || path.join(appData, 'BetterDiscord', 'plugins'), 'discord-dccon-library'),
     path.join(appData, 'discord-dccon-canary', 'discord-dccon-library')];
@@ -230,7 +209,7 @@ async function migrateLibrary(ctx) {
       const expected = path.join(await ctx.fs.realpath(path.dirname(root)), path.basename(root));
       if (path.sep === '/' ? realRoot !== expected : realRoot.toLowerCase() !== expected.toLowerCase()) throw Error('Library root must not be a symbolic link');
     }
-    async function visit(directory) {
+    async function visit(directory: string): Promise<void> {
       const info = await ctx.fs.lstat(directory);
       if (info.isSymbolicLink()) throw Error('Symbolic links in legacy library require manual migration');
       if (ctx.verifyRealPaths) {
@@ -253,69 +232,66 @@ async function migrateLibrary(ctx) {
     while (await exists(ctx.fs, root)) await visit(root);
   }
 }
-async function upgradeV2(ctx) {
+async function upgradeV2(ctx: MigrationContext) {
+  const {path} = ctx;
   const oldMarker = path.join(ctx.cacheRoot, 'migration.json');
   let marker;
   try {marker = JSON.parse(await ctx.fs.readFile(oldMarker, 'utf8'));}
-  catch (error) {if (error.code !== 'ENOENT') throw error;}
+  catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code !== 'ENOENT') throw error;}
   if (marker && (!Number.isInteger(marker.version) || marker.version < 1)) throw Error('Invalid legacy cache version');
   if (marker?.version > 2) throw Object.assign(Error('Cache format is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});
   await migration_v2(ctx);
   await migrateLibrary(ctx);
   if (marker) await moveFile(ctx, oldMarker, path.join(ctx.root, 'migration-backup', 'cache-migration.json'));
 }
-function checkVersion(config, latest) {
+function checkVersion(config: Configuration, latest: number) {
   if (config.version > latest) throw Object.assign(Error('Configuration is newer than this plugin'), {code: 'CONFIG_VERSION_TOO_NEW'});
 }
-function createConfigStore(options, migrations = {2: upgradeV2}) {
+export function createConfigStore(options: StoreOptions, environment: StorageEnvironment, migrations: Migrations = {2: upgradeV2}): ConfigStore {
   if (!/^[a-zA-Z0-9-]+$/.test(options.vectorSpec)) throw Error('Invalid vector cache version');
-  const fs = normalizeFS(options.fs || require('fs').promises), root = path.resolve(options.root);
+  const {path, digest} = environment;
+  const fs = normalizeFS(options.fs || environment.fs), root = path.resolve(options.root);
   const latest = options.latestVersion ?? Math.max(...Object.keys(migrations).map(Number));
-  const ownerAlive = options.ownerAlive || (pid => {
-    if (typeof process === 'undefined' || process.isWeb) return null;
-    try {process.kill(pid, 0); return true;} catch (error) {return error.code !== 'ESRCH';}
-  });
-  async function locked(action) {
+  const ownerAlive = options.ownerAlive || environment.ownerAlive;
+  async function locked<T>(action: (context: MigrationContext) => Promise<T>): Promise<T> {
     await fs.mkdir(root, {recursive: true});
-    const token = crypto.randomBytes(16).toString('hex'), lock = path.join(root, 'config.lock');
+    const token = environment.randomToken(), lock = path.join(root, 'config.lock');
     const ownerFile = path.join(lock, 'owner.json'), pulse = path.join(lock, 'heartbeat'), staleLocks = [], started = Date.now();
-    const ctx = {fs, root, cacheRoot: path.join(root, 'cache'), token, sequence: 0, options, vectorSpec: options.vectorSpec,
+    const ctx: MigrationContext = {fs, path, digest, root, cacheRoot: path.join(root, 'cache'), token, sequence: 0, options, vectorSpec: options.vectorSpec,
       verifyRealPaths: !!options.fs, legacyRoots: [...new Set((options.legacyRoots || [
         ...(options.legacyPluginsRoot ? [path.join(options.legacyPluginsRoot, 'discord-dccon-cache')] : []),
-        ...defaultLegacyRoots(path.join(root, 'cache'))]).map(value => path.resolve(value)))],
-      report: {moved: 0, duplicates: 0, archived: 0, vectors: 0}};
+        ...defaultLegacyRoots(path.join(root, 'cache'), path)]).map(value => path.resolve(value)))],
+      report: {moved: 0, duplicates: 0, archived: 0, vectors: 0}, hashFile: environment.hashFile};
     ctx.hashFile = async file => {
       if (options.fs) return digest(await fs.readFile(file, null));
-      const hash = crypto.createHash('sha256');
-      for await (const bytes of require('fs').createReadStream(file)) hash.update(bytes);
-      return hash.digest('hex');
+      return environment.hashFile(file);
     };
-    const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+    const sleep = options.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
     let staleObservation;
     while (true) {
       try {await fs.mkdir(lock, {recursive: false}); break;}
-      catch (error) {if (error.code !== 'EEXIST') throw error;}
-      let owner, info;
+      catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code !== 'EEXIST') throw error;}
+      let owner: {pid?: number; token?: string} | undefined, info: import('./types.ts').FileInfo;
       try {owner = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch { /* Retry incomplete owner metadata. */ }
       try {info = await fs.stat(pulse);}
-      catch (error) {
+      catch (_error) { const error = _error as NodeJS.ErrnoException;
         if (error.code !== 'ENOENT') throw error;
-        try {info = await fs.stat(lock);} catch (missing) {if (missing.code === 'ENOENT') continue; throw missing;}
+        try {info = await fs.stat(lock);} catch (_missing) { const missing = _missing as NodeJS.ErrnoException;if (missing.code === 'ENOENT') continue; throw missing;}
       }
-      const alive = Number.isInteger(owner?.pid) ? ownerAlive(owner.pid) : null;
-      const identity = /^[a-f0-9]{32}$/.test(owner?.token) ? owner.token : digest(String(info.birthtimeMs));
+      const alive = Number.isInteger(owner?.pid) ? ownerAlive(owner!.pid!) : null;
+      const identity = /^[a-f0-9]{32}$/.test(owner?.token!) ? owner!.token! : digest(String(info.birthtimeMs));
       const expired = alive === false || (alive === null && Date.now() - info.mtimeMs > 120000);
       if (expired && staleObservation === identity + ':' + info.mtimeMs) {
         const stale = lock + '.stale-' + identity;
         try {await fs.rename(lock, stale); staleLocks.push(stale); continue;}
-        catch (error) {if (!['ENOENT', 'EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code)) throw error;}
+        catch (_error) { const error = _error as NodeJS.ErrnoException;if (!['ENOENT', 'EEXIST', 'ENOTEMPTY', 'EPERM'].includes(error.code!)) throw error;}
       }
       staleObservation = expired ? identity + ':' + info.mtimeMs : undefined;
       if (Date.now() - started > (options.waitMs ?? 60000)) throw Error('Timed out waiting for shared configuration');
       await sleep(100);
     }
-    const owner = {pid: options.pid ?? (typeof process === 'undefined' ? 0 : process.pid), token};
-    let timer, heartbeat = Promise.resolve();
+    const owner = {pid: options.pid ?? environment.pid, token};
+    let timer: ReturnType<typeof setInterval> | undefined, heartbeat: Promise<unknown> = Promise.resolve();
     try {
       await atomicJSON(ctx, ownerFile, owner);
       await fs.writeFile(pulse, '');
@@ -323,21 +299,21 @@ function createConfigStore(options, migrations = {2: upgradeV2}) {
       return await action(ctx);
     } finally {
       clearInterval(timer); await heartbeat;
-      let current;
+      let current: {token: string} | undefined;
       try {current = JSON.parse(await fs.readFile(ownerFile, 'utf8'));} catch {}
       if (!current || current.token === token) {
-        for (const file of [ownerFile, pulse]) try {await fs.unlink(file);} catch (error) {if (error.code !== 'ENOENT') throw error;}
+        for (const file of [ownerFile, pulse]) try {await fs.unlink(file);} catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code !== 'ENOENT') throw error;}
         await fs.rmdir(lock);
       }
       for (const stale of staleLocks) {
-        for (const name of ['owner.json', 'heartbeat']) try {await fs.unlink(path.join(stale, name));} catch (error) {if (error.code !== 'ENOENT') throw error;}
-        try {await fs.rmdir(stale);} catch (error) {if (error.code !== 'ENOTEMPTY') throw error;}
+        for (const name of ['owner.json', 'heartbeat']) try {await fs.unlink(path.join(stale, name));} catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code !== 'ENOENT') throw error;}
+        try {await fs.rmdir(stale);} catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code !== 'ENOTEMPTY') throw error;}
       }
     }
   }
   return {
     open(preferred = {}) {return locked(async ctx => {
-      let config = await readConfig(fs, root);
+      let config = await readConfig(ctx);
       if (!config) {
         config = {version: 1, settings: await importSettings(ctx, preferred)};
         await atomicJSON(ctx, path.join(root, 'config.json'), config);
@@ -353,7 +329,7 @@ function createConfigStore(options, migrations = {2: upgradeV2}) {
       return config;
     });},
     save(key, value, before) {return locked(async ctx => {
-      const config = await readConfig(fs, root);
+      const config = await readConfig(ctx);
       if (!config) throw Error('Shared configuration has not been initialized');
       checkVersion(config, latest);
       if (config.version !== latest) throw Error('Shared configuration needs migration');
@@ -364,4 +340,3 @@ function createConfigStore(options, migrations = {2: upgradeV2}) {
     });}
   };
 }
-module.exports = {createConfigStore, migration_v2, normalizeFS, mergeSetting};

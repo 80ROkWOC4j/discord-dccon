@@ -90,20 +90,18 @@ async function main() {
     return {nativeAttachments:10,queueRetained:true};
   });
   await check('real IndexedDB concurrent connections preserve independent settings',async()=>{
-    const configSource=fs.readFileSync(path.resolve(__dirname,'../userscript/config.js'),'utf8');
-    const sharedSource=fs.readFileSync(path.resolve(__dirname,'../scripts/shared-storage.cjs'),'utf8');
-    const result=await command('POST','/execute/async',{script:`const done=arguments[arguments.length-1];(async()=>{
-      const module={exports:{}};new Function('module',arguments[0])(module);
-      const shared={exports:{}};new Function('require','module',arguments[1])(()=>({}),shared);
+    const configBundle=require('esbuild').buildSync({entryPoints:[path.resolve(__dirname,'../src/storage/indexeddb.ts')],
+      bundle:true,write:false,format:'iife',globalName:'DCConConfig',platform:'browser',target:'es2022',tsconfigRaw:{}}).outputFiles[0].text;
+    const result=await command('POST','/execute/async',{script:`const done=arguments[arguments.length-1];${configBundle}(async()=>{
       const name='dccon-review-'+crypto.randomUUID(),factory={open:(_,version)=>indexedDB.open(name,version)};
-      const a=module.exports.createConfig(factory,shared.exports.mergeSetting),b=module.exports.createConfig(factory,shared.exports.mergeSetting);
+      const a=DCConConfig.createConfig(factory),b=DCConConfig.createConfig(factory);
       try{
         await Promise.all([a.config('open',[{dccons:[]}]),b.config('open',[{dccons:[]}])]);
         await Promise.all([a.config('save',['dccons',[{info:{package_idx:'1'}}],[]]),b.config('save',['favorites',[{path:'test',ext:'gif'}],[]])]);
         await b.config('save',['dccons',[{info:{package_idx:'2'}}],[]]);
         const data=await a.config('open',[{}]);return {packs:data.settings.dccons.length,favorites:data.settings.favorites.length};
       }finally{a.dispose();b.dispose();await Promise.resolve();await new Promise((resolve,reject)=>{const r=indexedDB.deleteDatabase(name);r.onsuccess=resolve;r.onerror=()=>reject(r.error);});}
-    })().then(done,e=>done({error:e.message}));`,args:[configSource,sharedSource]});
+    })().then(done,e=>done({error:e.message}));`,args:[]});
     assert.deepEqual(result,{packs:2,favorites:1});return result;
   });
   await check('no message was sent and composer draft is preserved',async()=>{

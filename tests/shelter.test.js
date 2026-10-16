@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const {captureWebpack, findWebpackRequire} = require('../shelter/webpack');
-const {createShelterPlatform} = require('../platform/shelter.ts');
+const {createShelterPlatform} = require('../src/platform/shelter.ts');
 const {createFiles, resolveFile, allowedDownload, hash, prepareDataRoot, channelOptions} = require('../shelter/native');
 
 test('shelter module capture survives webpack push replacement and observes reassigned exports', () => {
@@ -138,7 +138,7 @@ test('image sends use shelter Discord REST, never an ambiguous HTTP export', asy
   const shelter = {http: {_raw: rest}, React: {Component: class {}}, plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
   const adapter = createShelterPlatform(shelter, {initialData: {}}, webpack);
   const module = {exports: {}};
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   vm.runInNewContext(source + '\nmodule.exports={sendImagesDirectly};', {
     module, DCConPlatform: adapter.platform, structuredClone, setTimeout, clearTimeout,
   });
@@ -202,14 +202,14 @@ test('native bridge confines writes and reuses legacy binary cache read-only', a
 });
 
 test('generated shelter bootstrap and DCCon source parse', async () => {
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   assert.doesNotThrow(() => new vm.Script(source));
-  const plugin = await fs.readFile(path.join(__dirname, '../shelter/plugin.js'), 'utf8');
+  const plugin = require('./helpers/core.cjs').shelterLifecycleSource();
   assert.doesNotThrow(() => new vm.Script(plugin));
 });
 
 test('plugin starts after first-store retry without PoC status APIs and cleans up', async () => {
-  const source = await fs.readFile(path.join(__dirname, '../shelter/plugin.js'), 'utf8');
+  const source = require('./helpers/core.cjs').shelterLifecycleSource();
   const timers = [], events = [];
   let firstStore = true, lifecycle;
   const context = vm.createContext({
@@ -217,7 +217,7 @@ test('plugin starts after first-store retry without PoC status APIs and cleans u
     dcconWebpack: {getByKeys: () => ({})},
     setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {},
     createShelterPlatform: () => ({platform: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
-    dcconSource: 'module.exports=class {start(){DCConPlatform.mount();} stop(){DCConPlatform.unmount();}};',
+    createPlugin: platform => class {start(){platform.mount();} stop(){platform.unmount();}}, __DCCON_SPLIT_WORKER__: '',
     shelter: {React: {createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
       http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
       plugin: {id: 'discord-dccon', flushStore() {
@@ -250,7 +250,7 @@ for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Sta
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
     if (name === 'node:process') return {platform};
-    if (name === './shared-storage.cjs') return require('../scripts/shared-storage.cjs');
+    if (name === './shared-storage.cjs') return require('../src/storage/node.ts');
     if (name === './native') return {allowedDownload, channelOptions, prepareDataRoot: (base, selected) => {
       assert.equal(selected, channel);
       assert.equal(base, platform === 'linux' ? path.join(os.tmpdir(), '.config') : os.tmpdir());
@@ -367,7 +367,7 @@ test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings cha
 });
 
 test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native rendering on other hosts', async () => {
-  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   const pending=[],revoked=[];
   const context={module:{exports:{}},AbortController,URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
     platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
@@ -386,7 +386,7 @@ test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native 
 });
 
 test('Blob thumbnails wait for intersection and ignore stale visibility callbacks', async () => {
-  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   const downloads=[], observers=[], revoked=[];
   const context={module:{exports:{}},AbortController,
     IntersectionObserver:class {

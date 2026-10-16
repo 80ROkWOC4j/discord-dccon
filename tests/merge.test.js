@@ -6,7 +6,7 @@ const executablePath = [process.env.WEBP_TEST_BROWSER, chromium.executablePath()
 function api(extra = {}) {
   const context = { module: { exports: {} }, URL, Blob, File, BdApi: { React: { Component: class {
   } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }, ...extra };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../discord-dccon.plugin.js"), "utf8") + "\nmodule.exports={WebPCache,animationTiming,mergeAnimationReason,mergeAnimatedImages,getMergedImage,BdApi,setMergeForTest: value => {mergeAnimatedImages = value;}};", context);
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() + "\nmodule.exports={WebPCache,animationTiming,mergeAnimationReason,mergeAnimatedImages,getMergedImage,BdApi,setMergeForTest: value => {mergeAnimatedImages = value;}};", context);
   return context.module.exports;
 }
 

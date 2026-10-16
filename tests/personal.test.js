@@ -24,7 +24,7 @@ function harness(t, options = {}) {
       Webpack: {getByKeys: () => ({}), getStore: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}},
       React: {Component: class {constructor(props) {this.props = props;} setState(next) {Object.assign(this.state, next);}}, createElement() {}},
     }};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
     '\nWebPCache.convert = convert; module.exports = {personalVideo, personalURL, preparePersonalCon, storePersonalCon, removePersonalCon, getDCConImage, pickerPacks, PersonalConManager, updateQueue, activeQueue, Embedding};', context);
   return {...context.module.exports, data, calls, dir};
 }

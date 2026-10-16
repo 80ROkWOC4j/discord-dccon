@@ -12,7 +12,7 @@ function codecContext(extra = {}) {
   const context = {module: {exports: {}}, require, URL, Blob, TextEncoder, TextDecoder, AbortController,
     BdApi: {React: {Component: class {}}, Webpack: {
       getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}, ...extra};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
     '\nmodule.exports=WebPCache;', context);
   return context;
 }
@@ -67,7 +67,7 @@ test('split WASM is verified, cached offline, and rejects a corrupt replacement'
 test('real nine-way split preserves tile pixels, padding, animation timing and finite loops', {skip: !executablePath}, async t => {
   const context = {module: {exports: {}}, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
+  vm.runInNewContext(require('./helpers/core.cjs').coreSource() +
     '\nmodule.exports={WebPCache, splitImageIntoNine, isWebP, webpFile};', context);
   const api = context.module.exports, assets = {};
   for (const [kind, {name}] of Object.entries(api.WebPCache.specs).filter(([, spec]) => spec.name)) {

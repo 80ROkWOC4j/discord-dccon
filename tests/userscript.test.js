@@ -3,8 +3,6 @@ const assert = require('node:assert/strict');
 const {IDBFactory} = require('fake-indexeddb');
 const {createUserscriptNative} = require('../userscript/native');
 const {createBrowserFiles} = require('../userscript/browser-files');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 
 test('userscript native preserves hashing, clipboard and binary cache support', async () => {
@@ -62,7 +60,7 @@ test('Firefox GM cookie continuation lines cannot become invalid response header
 });
 
 test('remote thumbnails render without a React hook dispatcher and release stale requests and URLs', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   const pending = [], revoked = [];
   const context = {module:{exports:{}}, AbortController,
     URL:{createObjectURL: value => 'blob:' + value, revokeObjectURL: value => revoked.push(value)},

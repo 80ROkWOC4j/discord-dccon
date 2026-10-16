@@ -1,7 +1,5 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 
 function load(file, {components = false, missingSearchModule = true, environment = {}, api = {}} = {}) {
@@ -37,7 +35,7 @@ function load(file, {components = false, missingSearchModule = true, environment
       ...api,
     },
   };
-  const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+  const source = require('./helpers/core.cjs').coreSource();
   vm.runInNewContext(source + (components ? '\nmodule.exports = {DCConButton, DCConPanel, events: typeof PluginEvents === "undefined" ? undefined : PluginEvents};' : ''), context);
   return context.module.exports;
 }

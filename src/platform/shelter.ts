@@ -12,7 +12,7 @@ interface ShelterHost {
   http?: {_raw?: DiscordExport};
   plugin: {store: {dcconData?: Settings}};
   ui: {ToastColors: Record<string, unknown>; injectCss(css: string): () => void;
-    showToast(options: {title: string; content: string; duration: number; color: unknown}): void};
+    showToast(options: {title: string; content: string; duration: number; color?: unknown}): void};
 }
 export function createShelterPlatform(shelter: ShelterHost, native: NativeBridge, webpack: ModuleLookup): PlatformHandle {
   const styles = new Map<string, () => void>();

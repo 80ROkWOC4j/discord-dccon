@@ -2,8 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {JSDOM}=require('jsdom');
 const {IDBFactory}=require('fake-indexeddb');
-const {mergeSetting}=require('../scripts/shared-storage.cjs');
-const {createConfig}=require('../userscript/config');
+const {createConfig}=require('../src/storage/indexeddb.ts');
 const {createComposerBridge}=require('../userscript/composer');
 const fs=require('node:fs');
 const path=require('node:path');
@@ -16,10 +15,10 @@ test('mobile Discord textarea mounts the toolbar and receives files without chan
  const page={Event:window.Event,File:window.File,MutationObserver:window.MutationObserver,location:window.location,setTimeout,clearTimeout,
   DataTransfer:class{constructor(){this.files=[];this.items={add:file=>this.files.push(file)};}}};
  const bridge=createComposerBridge(page,document),rendered=[];
- const source=fs.readFileSync(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
+ const source=require('./helpers/core.cjs').coreSource();
  const context={module:{exports:{}},document,MutationObserver:window.MutationObserver,queueMicrotask,
   platform:{composer:bridge,discord:{selectedChannelStore:()=>null},react:{createElement:(_,props)=>props},reactDOM:{createRoot:()=>({render:props=>rendered.push(props),unmount(){}})}}};
- vm.runInNewContext(source.slice(source.indexOf('function mountToolbar'),source.indexOf('// 다국어 처리를'))+'\nmodule.exports=mountToolbar;',context);
+ vm.runInNewContext(source.slice(source.indexOf('function mountToolbar'),source.indexOf('const translations ='))+'\nmodule.exports=mountToolbar;',context);
  const stop=context.module.exports(()=>{});
  try{
   assert.equal(document.querySelectorAll('.dccon-toolbar-host').length,1);assert.equal(bridge.available(),true);
@@ -34,7 +33,7 @@ test('mobile Discord textarea mounts the toolbar and receives files without chan
 });
 
 test('settings merge concurrent tabs without losing unrelated keys or same-list additions',async()=>{
- const indexedDB=new IDBFactory(),a=createConfig(indexedDB,mergeSetting),b=createConfig(indexedDB,mergeSetting);
+ const indexedDB=new IDBFactory(),a=createConfig(indexedDB),b=createConfig(indexedDB);
  const first={info:{package_idx:'1'}},second={info:{package_idx:'2'}};
  await Promise.all([a.config('open',[{dccons:[],favorites:[]}]),b.config('open',[{dccons:[],favorites:[]}])]);
  await a.config('save',['dccons',[first],[]]);
@@ -46,7 +45,7 @@ test('settings merge concurrent tabs without losing unrelated keys or same-list 
  await b.config('save',['dccons',[],[second]]);
  assert.deepEqual((await a.config('open',[{}])).settings.dccons.map(p=>p.info.package_idx).sort(),['1','3']);
  a.dispose();b.dispose();
- const reopened=createConfig(indexedDB,mergeSetting);
+ const reopened=createConfig(indexedDB);
  assert.equal((await reopened.config('open',[{dccons:[]}])).settings.dccons.length,2);reopened.dispose();
 });
 function fixture() {

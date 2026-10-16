@@ -17,7 +17,7 @@ async function main() {
     React, Data: {load: (_, key) => key === 'dccons' ? packs : []},
     Webpack: {getByKeys: () => ({locale: 'ko'}), getModule: () => ({}), Filters: {byKeys: () => () => true}},
   }};
-  let source = fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
+  let source = require('./helpers/core.cjs').coreSource();
   source = source.replace(/const DCConProxyURL = .*?;/, 'const DCConProxyURL = "";');
   vm.runInNewContext(source + '\nmodule.exports = {Plugin: module.exports, DCConPanel, DCConSettingsPanel};', context);
   const {Plugin, DCConPanel, DCConSettingsPanel} = context.module.exports;

@@ -1,24 +1,6 @@
 import type {NativeBridge, Platform} from './types.ts';
 type Bridge = Omit<NativeBridge, 'config'>;
 
-// Only used when evaluating the existing shared-storage module in the browser.
-export function createNativeRequire(native: Bridge) {
-  const fs = Object.fromEntries(['readFile', 'writeFile', 'mkdir', 'rename', 'unlink'].map(method => [method, (...args: any[]) => {
-    const callback = args.pop();
-    native.file(method, args).then(value => callback(null, value), error => callback(error));
-  }]));
-  return (name: string): any => {
-    if (name === 'fs') return fs;
-    if (name === 'path') return {join: (...parts: string[]) => parts.join('/'), dirname: (value: string) => value.slice(0, value.lastIndexOf('/'))};
-    if (name === 'crypto') return {createHash: (algorithm: string) => {
-      if (algorithm !== 'sha256') throw Error('Only SHA-256 is supported');
-      const chunks: (string | Uint8Array)[] = [];
-      const hash = {update(value: string | Uint8Array) {chunks.push(value); return hash;}, digest: (encoding: string) => native.hash(chunks, encoding)};
-      return hash;
-    }};
-    throw Error(`Unsupported native module: ${name}`);
-  };
-}
 export function createNativeServices(native: Bridge, cacheRoot = '/cache') {
   const requestScope = globalThis.crypto.randomUUID(), activeRequests = new Set<string>();
   let requestId = 0, disposed = false;

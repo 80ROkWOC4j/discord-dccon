@@ -1,0 +1,15 @@
+/**
+ * @name discord-dccon
+ * @description 디스코드에서 디시콘을 쉽게 사용할 수 있게 도와주는 플러그인입니다.
+ * @version __VERSION__
+ * @author 80ROkWOC4j
+ * @website https://github.com/80ROkWOC4j/discord-dccon
+ * @source https://github.com/80ROkWOC4j/discord-dccon
+ * @authorLink https://github.com/80ROkWOC4j
+ */
+
+// Derived from DCCon2 by minibox (Discord author ID: 310247242546151434).
+// Original repository: https://github.com/minibox24/DCCon2 (no longer available).
+// Modified version maintained by 80ROkWOC4j; modified on 2026-10-08.
+// Distributed under GNU GPL version 3; see LICENSE. Original attribution retained.
+// Reference: https://github.com/Dastan21/BDAddons/blob/main/plugins/FavoriteMedia/FavoriteMedia.plugin.js

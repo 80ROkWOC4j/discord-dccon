@@ -16,11 +16,11 @@ before(async () => {
   if (!available) return;
   // Keep installer fixtures isolated from builds performed by other test files.
   distribution = await fs.mkdtemp(path.join(os.tmpdir(),'dccon-release-fixture-'));
-  await put(path.join(distribution,'betterdiscord/discord-dccon.plugin.js'),await fs.readFile(path.join(repo,'discord-dccon.plugin.js')));
+  await put(path.join(distribution,'betterdiscord/discord-dccon.plugin.js'),await fs.readFile(require('../scripts/build.cjs').pluginPath));
   const runtime=path.join(distribution,'standalone/runtime');
   await put(path.join(runtime,'bootstrap.js'),'// hostMod: fixture runtime; installation does not execute it');
   for(const name of ['main.cjs','preload.cjs','native.js']) await put(path.join(runtime,name),await fs.readFile(path.join(repo,'shelter',name)));
-  await put(path.join(runtime,'shared-storage.cjs'),await fs.readFile(path.join(repo,'scripts/shared-storage.cjs')));
+  await put(path.join(runtime,'shared-storage.cjs'),require('../scripts/build.cjs').buildStorage());
   await put(path.join(distribution,'standalone/shelter-version.json'),JSON.stringify({installLayout:'desktop_core',channels:['Stable','PTB','Canary']}));
   const pack=path.join(distribution,'pack.ps1');
   await put(pack,`$ErrorActionPreference='Stop'
@@ -126,7 +126,7 @@ for(const shell of shells) test(`unified Windows installer: channels, modes, rol
  await put(path.join(f.env.APPDATA,'BetterDiscord/data/betterdiscord.asar'),'bd runtime');
  const config=path.join(f.plugins,'discord-dccon.config.json');await put(config,'{"keep":true}');
  run();run();assert.match(run(['-Mode','Standalone'],false).stderr,/Detected BetterDiscord/);
- assert.equal(await fs.readFile(path.join(f.plugins,'discord-dccon.plugin.js'),'utf8'),await fs.readFile(path.join(repo,'discord-dccon.plugin.js'),'utf8'));
+ assert.equal(await fs.readFile(path.join(f.plugins,'discord-dccon.plugin.js'),'utf8'),await fs.readFile(require('../scripts/build.cjs').pluginPath,'utf8'));
  f.env.DCCON_OFFLINE='1';run(['-Remove']);delete f.env.DCCON_OFFLINE;
  await assert.rejects(fs.access(path.join(f.plugins,'discord-dccon.plugin.js')));
  assert.equal(await fs.readFile(config,'utf8'),'{"keep":true}');

@@ -2,10 +2,10 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const vm = require('node:vm');
 const {execFileSync} = require('node:child_process');
-const {bundlePlatform, coreSource} = require('../scripts/platform-build.cjs');
+const {buildBetterDiscord, buildShelterPlugin, buildStorage} = require('../scripts/build.cjs');
 const output = path.resolve(__dirname, '../artifacts/shelter');
 async function main() {
-  require('../scripts/build-split-worker.cjs');
+  const source = buildBetterDiscord();
   await fs.mkdir(output, {recursive: true});
   const dependency = path.resolve(__dirname, '../vendor/shelter');
   let shelter;
@@ -14,14 +14,9 @@ async function main() {
   const revision = execFileSync('git', ['-C', dependency, 'rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
   new vm.Script(shelter);
   const read = name => fs.readFile(path.join(__dirname, name), 'utf8');
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
-  const core = coreSource(source);
   const version = JSON.parse(await fs.readFile(path.resolve(__dirname, '../package.json'), 'utf8')).version;
-  const plugin = `(function(){\n${bundlePlatform('shelter')}\nconst createShelterPlatform=DCConPlatformAdapters.createShelterPlatform;\nconst dcconSource=${JSON.stringify(core)}, dcconVersion=${JSON.stringify(version)};\nreturn (\n${await read('plugin.js')}\n);\n})()`;
-  const lifecycle = new Function('shelter', 'return ' + plugin)({});
-  if (typeof lifecycle?.onLoad !== 'function' || typeof lifecycle?.onUnload !== 'function') {
-    throw Error('Generated shelter plugin has no lifecycle');
-  }
+  const plugin = buildShelterPlugin(version);
+  new vm.Script(plugin);
   // The shared plugin source receives its platform API without modifying globals.
   const bootstrap = `(() => {\n${await read('webpack.js')}\nconst dcconWebpack=captureWebpack(globalThis,DCConNative.hostMod==='vencord'?()=>globalThis.Vencord?.Webpack?.wreq:undefined);\n` +
     // The plugin ID also namespaces shelter storage.
@@ -33,7 +28,7 @@ async function main() {
   new vm.Script(bootstrap);
   await fs.writeFile(path.join(output, 'bootstrap.js'), bootstrap);
   for (const name of ['main.cjs', 'preload.cjs', 'native.js']) await fs.copyFile(path.join(__dirname, name), path.join(output, name));
-  await fs.copyFile(path.join(__dirname, '../scripts/shared-storage.cjs'), path.join(output, 'shared-storage.cjs'));
+  await fs.writeFile(path.join(output, 'shared-storage.cjs'), buildStorage());
   const packages = path.resolve(__dirname, '../artifacts/dist');
   const standalone = path.join(packages, 'standalone'), betterdiscord = path.join(packages, 'betterdiscord');
   // Rebuild staging directories so renamed files cannot remain in release archives.

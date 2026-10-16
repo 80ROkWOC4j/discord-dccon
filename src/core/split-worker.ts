@@ -1,19 +1,27 @@
+/// <reference types="@jsquash/webp/emscripten-types" />
+import type {WebPModule} from '@jsquash/webp/codec/enc/webp_enc.js';
+import type {Binary} from './services.ts';
+import type {WorkerScope} from './worker-types.ts';
+import type {Failure} from './types.ts';
+interface AnimationSource {decoder: ImageDecoder; ends: number[]; duration: number; index: number; image: VideoFrame | null; loops?: number; width?: number; height?: number}
+interface MuxFrame {buffer: Buffer; delay: number; blend: boolean; dispose: boolean}
+const self = globalThis as unknown as WorkerScope<{bytes: Binary; wasm: Binary; images?: Binary[]}>;
 import createEncoder from "@jsquash/webp/codec/enc/webp_enc.js";
 import {defaultOptions} from "@jsquash/webp/meta.js";
 import {Image} from "node-webpmux";
 import {Buffer} from "buffer";
 
-let initialized;
-async function mergeAnimations(inputs, encoder) {
-  const sources = [], frames = [];
+let initialized: Promise<WebPModule> | undefined;
+async function mergeAnimations(inputs: Binary[], encoder: WebPModule) {
+  const sources: AnimationSource[] = [], frames: MuxFrame[] = [];
   try {
     if (inputs.length < 2 || inputs.length > 3) throw Error("애니메이션 2~3개만 합칠 수 있습니다.");
     for (const bytes of inputs) {
       const decoder = new ImageDecoder({data: bytes, type: "image/webp"});
-      const source = {decoder, ends: [], duration: 0, index: -1, image: null};
+      const source: AnimationSource = {decoder, ends: [], duration: 0, index: -1, image: null};
       sources.push(source);
       await decoder.tracks.ready;
-      const track = decoder.tracks.selectedTrack;
+      const track = decoder.tracks.selectedTrack!;
       if (track.frameCount < 2) throw Error("애니메이션 이미지끼리만 합칠 수 있습니다.");
       source.loops = Number.isFinite(track.repetitionCount) ? track.repetitionCount + 1 : 0;
       for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
@@ -27,8 +35,8 @@ async function mergeAnimations(inputs, encoder) {
     }
     if (sources.some(source => source.duration !== sources[0].duration)) throw Error("애니메이션 재생 길이가 같아야 합니다.");
     if (sources.some(source => source.loops !== sources[0].loops)) throw Error("애니메이션 반복 횟수가 같아야 합니다.");
-    const width = sources.reduce((sum, source) => sum + source.width, 0), height = Math.max(...sources.map(source => source.height));
-    const canvas = new OffscreenCanvas(width, height), context = canvas.getContext("2d", {willReadFrequently: true});
+    const width = sources.reduce((sum, source) => sum + source.width!, 0), height = Math.max(...sources.map(source => source.height!));
+    const canvas = new OffscreenCanvas(width, height), context = canvas.getContext("2d", {willReadFrequently: true})!;
     const times = [...new Set([0, ...sources.flatMap(source => source.ends)])].sort((a, b) => a - b);
     for (let step = 0; step < times.length - 1; step++) {
       context.clearRect(0, 0, width, height);
@@ -40,8 +48,8 @@ async function mergeAnimations(inputs, encoder) {
           source.image?.close(); source.image = null;
           source.image = (await source.decoder.decode({frameIndex: index})).image; source.index = index;
         }
-        context.drawImage(source.image, x, Math.floor((height - source.height) / 2));
-        x += source.width;
+        context.drawImage(source.image!, x, Math.floor((height - source.height!) / 2));
+        x += source.width!;
       }
       const output = encoder.encode(context.getImageData(0, 0, width, height).data, width, height, {
         ...defaultOptions, lossless: 1, quality: 75, method: 0, exact: 1,
@@ -73,16 +81,16 @@ self.onmessage = async ({data: {bytes, wasm, images}}) => {
       : bytes[0] === 71 ? "image/gif" : bytes[0] === 137 ? "image/png" : "image/jpeg";
     decoder = new ImageDecoder({data: bytes, type});
     await decoder.tracks.ready;
-    const track = decoder.tracks.selectedTrack;
-    const tiles = Array.from({length: 9}, () => []);
-    let canvas, context, tileSize;
+    const track = decoder.tracks.selectedTrack!;
+    const tiles = Array.from({length: 9}, (): MuxFrame[] => []);
+    let canvas: OffscreenCanvas | undefined, context!: OffscreenCanvasRenderingContext2D, tileSize!: number;
     for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
       const {image} = await decoder.decode({frameIndex});
       try {
         if (!canvas) {
           tileSize = Math.ceil(Math.max(image.displayWidth, image.displayHeight) / 3);
           canvas = new OffscreenCanvas(tileSize, tileSize);
-          context = canvas.getContext("2d", {willReadFrequently: true});
+          context = canvas.getContext("2d", {willReadFrequently: true})!;
         }
         const side = tileSize * 3, scale = side / Math.max(image.displayWidth, image.displayHeight);
         const width = image.displayWidth * scale, height = image.displayHeight * scale;
@@ -109,6 +117,6 @@ self.onmessage = async ({data: {bytes, wasm, images}}) => {
       results.push(new Uint8Array(bytes).buffer);
     }
     self.postMessage({tiles: results}, results);
-  } catch (error) {self.postMessage({error: error.message || String(error)});}
+  } catch (caught) {const error = caught as Failure;self.postMessage({error: error.message || String(error)});}
   finally {decoder?.close();}
 };

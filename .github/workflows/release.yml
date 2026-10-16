@@ -28,19 +28,20 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
+      - run: npm ci
+      - run: npm run build:plugin
       - name: Check release version
         run: |
           @'
           const fs = require('node:fs');
           const version = require('./package.json').version;
-          const plugin = fs.readFileSync('discord-dccon.plugin.js', 'utf8').match(/@version\s+(\S+)/)?.[1];
+          const plugin = fs.readFileSync('artifacts/betterdiscord/discord-dccon.plugin.js', 'utf8').match(/@version\s+(\S+)/)?.[1];
           const tag = process.env.GITHUB_REF_NAME;
           if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag) || tag !== `v${version}` || plugin !== version) {
             throw Error(`Version mismatch: tag=${tag}, package=${version}, plugin=${plugin}`);
           }
           '@ | node
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - run: npm ci
       # Installer tests build the release packages and exercise them in temporary directories.
       - run: npm test
       - name: Build userscript
@@ -52,7 +53,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:GITHUB_REF_NAME
-          $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'artifacts/userscript/discord-dccon.user.js', 'discord-dccon.plugin.js', 'install.ps1', 'install.sh')
+          $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'artifacts/userscript/discord-dccon.user.js', 'artifacts/betterdiscord/discord-dccon.plugin.js', 'install.ps1', 'install.sh')
           foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset" } }
           $existing = gh release view $tag --json isDraft 2>$null
           if ($LASTEXITCODE -eq 0) {
