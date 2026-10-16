@@ -18,7 +18,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
-  "version": "3.5.1",
+  "version": "3.6.0",
   "description": "Discord 디시콘 확장 — DCCon2 기반 비공식 파생 버전",
   "author": "80ROkWOC4j",
   "contributors": [
