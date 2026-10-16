@@ -14,7 +14,7 @@ import {DCConProxyURL} from '../packs.ts';
 export function createPickerUI(platform: Platform, { settings, packs, images, sending, embedding: Embedding, events: PluginEvents, media }: {
   settings: Pick<SettingsService, "loadData">;
   packs: Packs;
-  images: Pick<Images, "mergeAnimationReason">;
+  images: Pick<Images, "mergeImageReason">;
   sending: Pick<Sending, "activeQueue" | "removeBuffered" | "sendDCConMessage" | "isSending">;
   embedding: Pick<EmbeddingService, "enabled" | "status" | "cancelSearch" | "search" | "key">;
   events: Events;
@@ -32,7 +32,7 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
 
     constructor(props: ChannelProps) {
       super(props);
-      this.state = {mergeReady: false, mergeReason: "애니메이션 2~3개를 모아 주세요."};
+      this.state = {mergeReady: false, mergeReason: "이미지 2~3개를 모아 주세요."};
       this.mergeSequence = 0;
       this.refresh = () => {this.forceUpdate(); this.checkMerge();};
     }
@@ -44,11 +44,11 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       if (this.mergeFiles?.length === files.length && files.every((file, index) => file === this.mergeFiles![index])) return;
       this.mergeFiles = files;
       const sequence = ++this.mergeSequence;
-      this.setState({mergeReady: false, mergeReason: "재생 정보 확인 중…"});
-      images.mergeAnimationReason(files).then(reason => {
+      this.setState({mergeReady: false, mergeReason: "이미지 정보 확인 중…"});
+      images.mergeImageReason(files).then(reason => {
         if (sequence === this.mergeSequence) this.setState({mergeReady: !reason, mergeReason: reason});
       }, () => {
-        if (sequence === this.mergeSequence) this.setState({mergeReady: false, mergeReason: "애니메이션 정보를 읽지 못했습니다."});
+        if (sequence === this.mergeSequence) this.setState({mergeReady: false, mergeReason: "이미지 정보를 읽지 못했습니다."});
       });
     }
     render() {

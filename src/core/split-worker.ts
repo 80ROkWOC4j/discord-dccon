@@ -12,17 +12,16 @@ import {Image} from "node-webpmux";
 import {Buffer} from "buffer";
 
 let initialized: Promise<WebPModule> | undefined;
-async function mergeAnimations(inputs: Binary[], encoder: WebPModule) {
+async function mergeImages(inputs: Binary[], encoder: WebPModule) {
   const sources: AnimationSource[] = [], frames: MuxFrame[] = [];
   try {
-    if (inputs.length < 2 || inputs.length > 3) throw Error("애니메이션 2~3개만 합칠 수 있습니다.");
+    if (inputs.length < 2 || inputs.length > 3) throw Error("이미지 2~3개만 합칠 수 있습니다.");
     for (const bytes of inputs) {
       const decoder = new ImageDecoder({data: bytes, type: "image/webp"});
       const source: AnimationSource = {decoder, ends: [], duration: 0, index: -1, image: null};
       sources.push(source);
       await decoder.tracks.ready;
       const track = decoder.tracks.selectedTrack!;
-      if (track.frameCount < 2) throw Error("애니메이션 이미지끼리만 합칠 수 있습니다.");
       source.loops = Number.isFinite(track.repetitionCount) ? track.repetitionCount + 1 : 0;
       for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
         const {image} = await decoder.decode({frameIndex});
@@ -33,17 +32,19 @@ async function mergeAnimations(inputs: Binary[], encoder: WebPModule) {
         } finally {image.close();}
       }
     }
-    if (sources.some(source => source.duration !== sources[0].duration)) throw Error("애니메이션 재생 길이가 같아야 합니다.");
-    if (sources.some(source => source.loops !== sources[0].loops)) throw Error("애니메이션 반복 횟수가 같아야 합니다.");
+    const animations = sources.filter(source => source.ends.length > 1);
+    if (animations.some(source => source.duration !== animations[0].duration)) throw Error("애니메이션 재생 길이가 같아야 합니다.");
+    if (animations.some(source => source.loops !== animations[0].loops)) throw Error("애니메이션 반복 횟수가 같아야 합니다.");
     const width = sources.reduce((sum, source) => sum + source.width!, 0), height = Math.max(...sources.map(source => source.height!));
     const canvas = new OffscreenCanvas(width, height), context = canvas.getContext("2d", {willReadFrequently: true})!;
-    const times = [...new Set([0, ...sources.flatMap(source => source.ends)])].sort((a, b) => a - b);
+    const times = animations.length
+      ? [...new Set([0, ...animations.flatMap(source => source.ends)])].sort((a, b) => a - b) : [0, 1];
     for (let step = 0; step < times.length - 1; step++) {
       context.clearRect(0, 0, width, height);
       let x = 0;
       for (const source of sources) {
         let index = Math.max(0, source.index);
-        while (source.ends[index] <= times[step]) index++;
+        while (index < source.ends.length - 1 && source.ends[index] <= times[step]) index++;
         if (index !== source.index) {
           source.image?.close(); source.image = null;
           source.image = (await source.decoder.decode({frameIndex: index})).image; source.index = index;
@@ -57,7 +58,8 @@ async function mergeAnimations(inputs: Binary[], encoder: WebPModule) {
       if (!output) throw Error("합친 이미지 인코딩에 실패했습니다.");
       frames.push({buffer: Buffer.from(output), delay: times[step + 1] - times[step], blend: false, dispose: false});
     }
-    return new Uint8Array(await Image.save(null, {width, height, loops: sources[0].loops,
+    if (frames.length === 1) return new Uint8Array(frames[0].buffer);
+    return new Uint8Array(await Image.save(null, {width, height, loops: animations[0].loops,
       frames: await Promise.all(frames.map(frame => Image.generateFrame(frame)))}));
   } finally {
     for (const source of sources) {source.image?.close(); source.decoder.close();}
@@ -73,7 +75,7 @@ self.onmessage = async ({data: {bytes, wasm, images}}) => {
     });
     const encoder = await initialized;
     if (images) {
-      const output = await mergeAnimations(images, encoder);
+      const output = await mergeImages(images, encoder);
       self.postMessage({bytes: output.buffer}, [output.buffer]);
       return;
     }

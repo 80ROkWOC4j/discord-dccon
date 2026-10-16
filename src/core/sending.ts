@@ -144,7 +144,7 @@ export function createSending(platform: Platform, settings: SettingsService, ima
         if (splitNine && (con || keepOpen || activeQueue(channelId).length !== 1))
           throw Error("이미지를 정확히 1개 모았을 때만 9개로 나눠 보낼 수 있습니다.");
         if (mergeImages && (con || keepOpen || splitNine || activeQueue(channelId).length < 2 || activeQueue(channelId).length > 3))
-          throw Error("애니메이션 2~3개를 모았을 때만 합쳐 보낼 수 있습니다.");
+          throw Error("이미지 2~3개를 모았을 때만 합쳐 보낼 수 있습니다.");
         if (!con && !activeQueue(channelId).length) return false;
         if (keepOpen && activeQueue(channelId).length >= 9)
           throw new Error("최대 9개까지 모을 수 있습니다. 일반 클릭으로 마지막 콘과 함께 보내세요.");
@@ -168,7 +168,7 @@ export function createSending(platform: Platform, settings: SettingsService, ima
             });
           }
           if (mergeImages) {
-            markSend(attempt, "애니메이션 합치기");
+            markSend(attempt, "이미지 합치기");
             files = [await images.getMergedImage(queued, () => {
               if (generation !== bufferGeneration) throw Error("이미지 합치기가 중단되었습니다.");
             })];

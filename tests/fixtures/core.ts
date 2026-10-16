@@ -25,7 +25,7 @@ export function createHarness(platform: Platform, assets: {splitWorkerSource: st
     getChannel: sending.getCurrentChannel,
     setImageLoader: (loader: Images['getDCConImage']) => {images.getDCConImage = loader;},
     setAnimationTiming: (timing: Images['animationTiming']) => {images.animationTiming = timing;},
-    setMergeForTest: (merge: Images['mergeAnimatedImages']) => {images.mergeAnimatedImages = merge;},
+    setMergeForTest: (merge: Images['mergeImages']) => {images.mergeImages = merge;},
     setSplitForTest: (split: Images['splitImageIntoNine']) => {images.splitImageIntoNine = split;},
   };
 }

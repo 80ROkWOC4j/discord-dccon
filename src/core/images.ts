@@ -91,17 +91,16 @@ export function createImages(platform: Platform, cache: Cache, WebPCache: WebPSe
     })());
     return animationTimings.get(file)!;
   }
-  async function mergeAnimationReason(files: File[]) {
-    if (files.length < 2 || files.length > 3) return "애니메이션 2~3개를 모아 주세요.";
-    const timings = await Promise.all(files.map(file => service.animationTiming(file)));
-    if (timings.some(info => info.count < 2)) return "애니메이션 이미지끼리만 합칠 수 있습니다.";
+  async function mergeImageReason(files: File[]) {
+    if (files.length < 2 || files.length > 3) return "이미지 2~3개를 모아 주세요.";
+    const timings = (await Promise.all(files.map(file => service.animationTiming(file)))).filter(info => info.count > 1);
     if (timings.some(info => info.duration !== timings[0].duration)) return "애니메이션 재생 길이가 같아야 합니다.";
     if (timings.some(info => info.loops !== timings[0].loops)) return "애니메이션 반복 횟수가 같아야 합니다.";
     return "";
   }
-  async function mergeAnimatedImages(files: File[], checkActive: () => void) {
+  async function mergeImages(files: File[], checkActive: () => void) {
     checkActive();
-    const reason = await service.mergeAnimationReason(files);
+    const reason = await service.mergeImageReason(files);
     if (reason) throw Error(reason);
     checkActive();
     const images = await Promise.all(files.map(async file => new Uint8Array(await file.arrayBuffer())));
@@ -123,14 +122,14 @@ export function createImages(platform: Platform, cache: Cache, WebPCache: WebPSe
         if (platform.cacheAvailable()) {
           const hash = platform.sha256(key);
           target = cachePath("merged", hash);
-          try {cached = await readCacheFile("merged", hash);} catch { /* Cache miss: compose the animations. */ }
+          try {cached = await readCacheFile("merged", hash);} catch { /* Cache miss: compose the images. */ }
         }
         checkActive();
         const cachedFile = cached && typeof cached !== "string" && isWebP(cached) &&
           new DataView(cached.buffer, cached.byteOffset, cached.byteLength).getUint32(4, true) + 8 === cached.length
           ? webpFile(cached) : null;
-        if (cachedFile?.name === "dccon.webp") return cachedFile;
-        const file = await service.mergeAnimatedImages(entries.map(entry => entry.file), checkActive);
+        if (cachedFile) return cachedFile;
+        const file = await service.mergeImages(entries.map(entry => entry.file), checkActive);
         checkActive();
         if (target) {
           try {
@@ -150,7 +149,7 @@ export function createImages(platform: Platform, cache: Cache, WebPCache: WebPSe
     } finally {if (mergedRequests.get(requestKey) === request) mergedRequests.delete(requestKey);}
   }
 
-  const service = {getDCConImage, warmCache, splitImageIntoNine, animationTiming, mergeAnimationReason, mergeAnimatedImages, getMergedImage,
+  const service = {getDCConImage, warmCache, splitImageIntoNine, animationTiming, mergeImageReason, mergeImages, getMergedImage,
     stop() {cacheGeneration++;}};
   return service;
 }
