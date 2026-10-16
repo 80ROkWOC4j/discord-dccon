@@ -18,13 +18,17 @@ async function main() {
   const plugin = buildShelterPlugin(version);
   new vm.Script(plugin);
   // The shared plugin source receives its platform API without modifying globals.
-  const bootstrap = `(() => {\n${await read('webpack.js')}\nconst dcconWebpack=captureWebpack(globalThis,DCConNative.hostMod==='vencord'?()=>globalThis.Vencord?.Webpack?.wreq:undefined);\n` +
+  const bootstrap = `(() => {\n${await read('webpack.js')}\nlet shelterRequire;\n` +
+    `const dcconWebpack=captureWebpack(globalThis,DCConNative.hostMod==='vencord'?()=>globalThis.Vencord?.Webpack?.wreq:` +
+    `DCConNative.hostMod==='shelter'?()=>shelterRequire ||= findWebpackRequire(globalThis,globalThis.shelter?.flux?.storesFlat.SelectedChannelStore):undefined);\n` +
     // The plugin ID also namespaces shelter storage.
-    `const SHELTER_INJECTOR_PLUGINS={'discord-dccon':{js:${JSON.stringify(plugin)},local:true,update:false,` +
+    `const plugin={js:${JSON.stringify(plugin)},local:true,update:false,` +
     `manifest:{name:'discord-dccon',author:'80ROkWOC4j',description:'discord-dccon running on shelter'},` +
-    `injectorIntegration:{isVisible:true,allowedActions:{toggle:true},loaderName:'discord-dccon'}}};\n` +
+    `injectorIntegration:{isVisible:true,allowedActions:{toggle:true},loaderName:'discord-dccon'}};\n` +
     // shelter evals plugins in the global scope, so provide the captured module index explicitly.
-    `globalThis.dcconWebpack=dcconWebpack;\n${shelter}\n})();`;
+    `globalThis.dcconWebpack=dcconWebpack;\n` +
+    `if(DCConNative.hostMod==='shelter'){SHELTER_INJECTOR_PLUGINS['discord-dccon']=plugin;}else{\n` +
+    `const SHELTER_INJECTOR_PLUGINS={'discord-dccon':plugin};\n${shelter}\n}\n})();`;
   new vm.Script(bootstrap);
   await fs.writeFile(path.join(output, 'bootstrap.js'), bootstrap);
   for (const name of ['main.cjs', 'preload.cjs', 'native.js']) await fs.copyFile(path.join(__dirname, name), path.join(output, name));
@@ -45,7 +49,7 @@ async function main() {
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../LICENSE'), path.join(directory, 'LICENSE'));
   for (const directory of [standalone, betterdiscord]) await fs.copyFile(path.resolve(__dirname, '../THIRD_PARTY_NOTICES.md'), path.join(directory, 'THIRD_PARTY_NOTICES.md'));
   await fs.writeFile(path.join(standalone, 'shelter-version.json'), JSON.stringify({
-    installLayout: 'desktop_core', channels: ['Stable', 'PTB', 'Canary'],
+    installLayout: 'desktop_core', channels: ['Stable', 'PTB', 'Canary'], hostMods: ['vencord', 'shelter'],
     revision, source: 'https://github.com/uwu/shelter', builds: 'https://github.com/uwu/shelter-builds', license: 'CC0-1.0',
   }, null, 2) + '\n');
   if (!process.argv.includes('--stage-only')) execFileSync('pwsh',

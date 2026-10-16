@@ -4,9 +4,9 @@ import {createShelterPlatform} from '../platform/shelter.ts';
 import type {NativeBridge, ModuleLookup} from '../platform/types.ts';
 type Host = Parameters<typeof createShelterPlatform>[0] & {
   plugin: {id: string; flushStore(): void};
-  plugins: {stopPlugin(id: string): void; startPlugin(id: string): void};
+  plugins: {stopPlugin(id: string): void; startPlugin(id: string): void; removePlugin(id: string): void};
 };
-export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge,
+export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge | undefined,
   dcconWebpack: ModuleLookup & {isReady?(): boolean; storageRetried?: boolean}, dcconVersion: string) {
   let plugin: InstanceType<ReturnType<typeof createPlugin>> | undefined;
   let adapter: ReturnType<typeof createShelterPlatform> | undefined;
@@ -18,6 +18,12 @@ export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge,
   }
   async function start() {
     if (disposed) return;
+    if (!DCConNative) {
+      // The native installer was removed. Shelter retains plugin data on removal.
+      // Wait until startPlugin has finished registering this lifecycle instance.
+      queueMicrotask(() => shelter.plugins.removePlugin(shelter.plugin.id));
+      return;
+    }
     if (typeof (globalThis as {BdApi?: unknown}).BdApi !== 'undefined') {
       console.error('[discord-dccon shelter] BetterDiscord 중복 실행 감지. 기존 로더를 확인하세요.');
       return;

@@ -92,13 +92,24 @@ function Undo-LegacyRemoval($Legacy) {
     catch {Move-Item -LiteralPath $Legacy.original -Destination $Legacy.asar; throw}
 }
 
+function Test-ShelterCore([string]$Index) {
+    $core = Split-Path $Index
+    $installed = Join-Path $core 'discord-dccon'
+    if (Test-Path -LiteralPath $installed) {$Index = Join-Path $installed 'original.js'}
+    $preload = Join-Path $core 'preload.js'
+    if (!(Test-Path -LiteralPath $preload) -or !(Test-Path -LiteralPath (Join-Path $core 'branches.json'))) {return $false}
+    $text = Get-Content -LiteralPath $Index -Raw
+    return $text.Contains('SHELTUPDATE_FRAMEWORK_ORIGINAL_PRELOAD') -and $text.Contains('SHELTER_BUNDLE_FETCH') -and
+        (Get-Content -LiteralPath $preload -Raw).Contains('SHELTER_BUNDLE_FETCH')
+}
+
 function Get-CoreEntryState([string]$Index) {
     $installed = Join-Path (Split-Path $Index) 'discord-dccon'
     if (Test-Path -LiteralPath $installed) {
         $manifest = Join-Path $installed 'discord-dccon-install.json'
         if (!(Test-Path -LiteralPath $manifest)) {throw 'Unrecognized desktop_core addon. No files were changed.'}
         $record = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-        if ($record.kind -ne 'discord-dccon-core' -or [string]$record.hostMod -notin @('', 'vencord') -or $record.channel -ne $Channel) {throw 'Unexpected desktop_core installation record.'}
+        if ($record.kind -ne 'discord-dccon-core' -or [string]$record.hostMod -notin @('', 'vencord', 'shelter') -or $record.channel -ne $Channel) {throw 'Unexpected desktop_core installation record.'}
         if ((Get-FileHash -LiteralPath (Join-Path $installed 'original.js')).Hash -ne $record.originalHash) {throw 'Modified desktop_core backup. No files were changed.'}
         $current = (Get-FileHash -LiteralPath $Index).Hash
         if ($current -eq $record.loaderHash) {return @{state='addon';record=$record}}
@@ -127,6 +138,7 @@ function Install-Standalone([string]$PackageDirectory, [string]$HostMod = '') {
         $packageInfo = Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json
         if ($packageInfo.installLayout -ne 'desktop_core') {throw 'This package does not use the desktop_core layout. Use a newer release.'}
         if ($Channel -notin @($packageInfo.channels)) {throw "This release does not support standalone $Channel. Choose a newer release."}
+        if ($HostMod -eq 'shelter' -and 'shelter' -notin @($packageInfo.hostMods)) {throw 'This release does not support Shelter coexistence. Choose a newer release.'}
     }
     $entries = @(Get-DesktopCoreEntries $version.FullName $dataRoot | Select-Object -Unique)
     if ($entries.Count -ne 1) {throw 'Launch Discord once, then quit it. Expected exactly one current desktop_core entry.'}
@@ -134,7 +146,9 @@ function Install-Standalone([string]$PackageDirectory, [string]$HostMod = '') {
     if (!(Test-Path -LiteralPath (Join-Path $core 'core.asar'))) {throw 'Discord desktop_core is incomplete.'}
     $installed = Join-Path $core 'discord-dccon'
     $entry = Get-CoreEntryState $index
-    if ($entry.state -eq 'other') {throw 'Unknown desktop_core loader. No files were changed.'}
+    if ($HostMod -eq 'shelter') {
+        if (!(Test-ShelterCore $index)) {throw 'Expected the standard sheltupdate Shelter installation.'}
+    } elseif ($entry.state -eq 'other') {throw 'Unknown desktop_core loader. No files were changed.'}
     $record = $entry.record
     if ($Remove -and !$record) {throw 'No discord-dccon installation in the current desktop_core.'}
     $temporary = Join-Path $core ('dccon-entry-' + [guid]::NewGuid().ToString('N') + '.tmp')
@@ -168,6 +182,10 @@ try { require('./discord-dccon/runtime/main.cjs'); }
 catch (error) { console.error('[discord-dccon] Loader failed', error); }
 module.exports = require('./core.asar');
 '@
+        if ($HostMod -eq 'shelter') {
+            # Execute the original source in its original directory, preserving relative paths.
+            $entry = $entry.Replace("module.exports = require('./core.asar');", [IO.File]::ReadAllText($original))
+        }
         [IO.File]::WriteAllText((Join-Path $stage 'index.js'), $entry, [Text.UTF8Encoding]::new($false))
         $saved = @{kind='discord-dccon-core';hostMod=$HostMod;channel=$Channel;originalHash=(Get-FileHash -LiteralPath (Join-Path $stage 'original.js')).Hash;loaderHash=(Get-FileHash -LiteralPath (Join-Path $stage 'index.js')).Hash}
         $saved | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stage 'discord-dccon-install.json') -Encoding utf8
@@ -189,7 +207,11 @@ module.exports = require('./core.asar');
         if (Test-Path -LiteralPath $stage) {Remove-Item -LiteralPath $stage -Recurse -Force}
         if (Test-Path -LiteralPath $temporary) {Remove-Item -LiteralPath $temporary}
     }
-    Write-Output "discord-dccon standalone installed for Discord $Channel (desktop_core). Start Discord normally. Host updates may require reinstalling discord-dccon."
+    if ($HostMod -eq 'shelter') {
+        Write-Output "discord-dccon installed in existing Shelter for Discord $Channel. Start Discord normally. Host updates may require reinstalling discord-dccon."
+    } else {
+        Write-Output "discord-dccon standalone installed for Discord $Channel (desktop_core). Start Discord normally. Host updates may require reinstalling discord-dccon."
+    }
 }
 function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     $version = Get-ChildItem -LiteralPath $Root -Directory |
@@ -198,9 +220,15 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     if (!$version) {throw "Discord installation not found at $Root"}
     $resources = Join-Path $version.FullName 'resources'
     $settings = Join-Path $DataRoot 'settings.json'
+    $shelter = $false; $shelterCore = $false
     if (Test-Path -LiteralPath $settings) {
         $config = Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json
-        if ($config.UPDATE_ENDPOINT -or $config.NEW_UPDATE_ENDPOINT) {throw 'Custom Discord update endpoints detected. Remove the existing client mod first.'}
+        foreach ($endpoint in @($config.UPDATE_ENDPOINT, $config.NEW_UPDATE_ENDPOINT)) {
+            if ($endpoint) {
+                if ($endpoint -cnotmatch '^https://inject\.shelter\.uwu\.network/shelter/?$') {throw 'Custom Discord update endpoints detected. Remove the existing client mod first.'}
+                $shelter = $true
+            }
+        }
     }
     $states = @()
     $appEntry = Join-Path $resources 'app/index.js'
@@ -221,12 +249,18 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     # Inspect only this host version, never a stale module left by an older Discord.
     foreach ($file in @(Get-DesktopCoreEntries $version.FullName $DataRoot | Select-Object -Unique)) {
         $entry = Get-CoreEntryState $file
+        if ($shelter -and (Test-ShelterCore $file)) {$shelterCore = $true}
         if ($entry.record) {$hasStandalone = $true}
         elseif ($entry.state -eq 'other') {
             $text = Get-Content -LiteralPath $file -Raw
-            if ($text -match 'betterdiscord\.asar' -and $text -match 'core\.asar') {$states += 'BetterDiscord'}
+            if ($shelter -and $shelterCore) { }
+            elseif ($text -match 'betterdiscord\.asar' -and $text -match 'core\.asar') {$states += 'BetterDiscord'}
             else {throw "Unknown core loader: $file"}
         }
+    }
+    if ($shelter) {
+        if (!$shelterCore) {throw 'Incomplete Shelter installation. Repair sheltupdate first.'}
+        $states += 'Shelter'
     }
     if ($states.Count -gt 1 -or ($hasStandalone -and $legacy) -or (($hasStandalone -or $legacy) -and $states -contains 'BetterDiscord')) {throw 'Multiple client mod loaders detected. Resolve them before installing.'}
     if ($states -contains 'BetterDiscord') {
@@ -234,6 +268,7 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
         return 'BetterDiscord'
     }
     if ($states -contains 'Vencord') {return 'Vencord'}
+    if ($states -contains 'Shelter') {return 'Shelter'}
     return 'Standalone'
 }
 $Mode = switch ($Mode) { 'betterdiscord' {'BetterDiscord'} 'standalone' {'Standalone'} default {'Auto'} }
@@ -246,7 +281,7 @@ if (Get-Process -Name Discord,DiscordPTB,DiscordCanary -ErrorAction SilentlyCont
 }
 $dataRoot = Join-Path $env:APPDATA $client.ToLowerInvariant()
 $detected = Get-InstallationMode $DiscordRoot $dataRoot
-$HostMod = if ($detected -eq 'Vencord') {'vencord'} else {''}
+$HostMod = if ($detected -in @('Vencord', 'Shelter')) {$detected.ToLowerInvariant()} else {''}
 if ($HostMod) {$detected = 'Standalone'}
 if ($Mode -ne 'Auto' -and $Mode -ne $detected) {throw "Detected $detected; requested $Mode. Existing loaders are not replaced."}
 $Mode = $detected

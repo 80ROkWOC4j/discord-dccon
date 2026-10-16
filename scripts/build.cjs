@@ -38,7 +38,7 @@ function buildStorage() {
 }
 function buildShelterPlugin(version) {
   const bundle = buildEntry('shelter', {globalName: 'DCConShelterEntry'});
-  return `(() => {\n${bundle}\nreturn DCConShelterEntry.createShelterPlugin(shelter,DCConNative,dcconWebpack,${JSON.stringify(version)});\n})()`;
+  return `(() => {\n${bundle}\nreturn DCConShelterEntry.createShelterPlugin(shelter,globalThis.DCConNative,globalThis.dcconWebpack,${JSON.stringify(version)});\n})()`;
 }
 module.exports = {root, pluginPath, buildStorage, buildOptions, buildEntry, buildBetterDiscord, buildShelterPlugin, buildSplitWorker, writeAtomic};
 if (require.main === module) buildBetterDiscord();

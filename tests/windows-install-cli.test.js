@@ -21,7 +21,7 @@ before(async () => {
   await put(path.join(runtime,'bootstrap.js'),'// hostMod: fixture runtime; installation does not execute it');
   for(const name of ['main.cjs','preload.cjs','native.js']) await put(path.join(runtime,name),await fs.readFile(path.join(repo,'shelter',name)));
   await put(path.join(runtime,'shared-storage.cjs'),require('../scripts/build.cjs').buildStorage());
-  await put(path.join(distribution,'standalone/shelter-version.json'),JSON.stringify({installLayout:'desktop_core',channels:['Stable','PTB','Canary']}));
+  await put(path.join(distribution,'standalone/shelter-version.json'),JSON.stringify({installLayout:'desktop_core',channels:['Stable','PTB','Canary'],hostMods:['shelter']}));
   const pack=path.join(distribution,'pack.ps1');
   await put(pack,`$ErrorActionPreference='Stop'
 $checksums=@{}
@@ -332,4 +332,43 @@ for(const shell of shells) test(`legacy removal is offline and does not require 
     assert.deepEqual(await fs.readFile(state.config),state.before[5]);
     await assert.rejects(fs.access(state.app));await assert.rejects(fs.access(state.original));
   }
+});
+
+for(const shell of shells) test(`Shelter coexistence preserves sheltupdate through install, update, rollback and offline removal (${path.basename(shell)})`,async t=>{
+ const f=await fixture(t);
+ const run=(args=[],ok=true,release=distribution)=>{
+  const r=spawnSync(shell,['-NoProfile','-File',f.script,...args],{env:{...f.env,DCCON_DIST:release},encoding:'utf8'});
+  if(ok)assert.equal(r.status,0,r.stderr);else assert.notEqual(r.status,0,r.stdout);return r;
+ };
+ for(const channel of ['Stable','PTB','Canary']) {
+  const {core,resources}=f.roots[channel],args=['-Channel',channel];
+  const settings=path.join(f.env.APPDATA,channel==='Stable'?'discord':'discord'+channel.toLowerCase(),'settings.json');
+  const host='// SHELTUPDATE_FRAMEWORK_ORIGINAL_PRELOAD SHELTER_BUNDLE_FETCH\nmodule.exports = require("./core.asar");\n';
+  await put(path.join(core,'index.js'),host);await put(path.join(core,'preload.js'),'// SHELTER_BUNDLE_FETCH');
+  await put(path.join(core,'branches.json'),'[{"name":"shelter"}]');
+  await put(settings,'{"UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter","NEW_UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter/","keep":true}');
+  const files=[settings,path.join(core,'preload.js'),path.join(core,'branches.json'),path.join(resources,'app.asar')];
+  const before=await Promise.all(files.map(file=>fs.readFile(file)));
+  if(channel==='Stable') {
+   const old=path.join(f.dir,'no-shelter-package');await fs.cp(path.join(distribution,'standalone'),old,{recursive:true});
+   await put(path.join(old,'shelter-version.json'),JSON.stringify({installLayout:'desktop_core',channels:['Stable']}));
+   assert.match(run(args,false,await packageRelease(f,old)).stderr,/does not support Shelter/);
+   f.env.DCCON_FAIL_ENTRY_COPY='1';assert.match(run(args,false).stderr,/Injected entry copy failure/);delete f.env.DCCON_FAIL_ENTRY_COPY;
+   assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),host);
+  }
+  run(args);run(args);
+  const installed=path.join(core,'discord-dccon');
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(installed,'runtime/channel.json'))),{channel,hostMod:'shelter'});
+  assert.equal(await fs.readFile(path.join(installed,'original.js'),'utf8'),host);
+  const loader=await fs.readFile(path.join(core,'index.js'),'utf8');assert.ok(loader.endsWith(host));
+  if(channel==='Stable') {
+   f.env.DCCON_FAIL_ENTRY_COPY='1';assert.match(run(args,false).stderr,/Injected entry copy failure/);delete f.env.DCCON_FAIL_ENTRY_COPY;
+   assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),loader);
+   await put(path.join(core,'index.js'),loader+'// modified');assert.match(run([...args,'-Remove'],false).stderr,/Modified desktop_core loader/);
+   await put(path.join(core,'index.js'),loader);
+  }
+  f.env.DCCON_OFFLINE='1';run([...args,'-Remove']);delete f.env.DCCON_OFFLINE;
+  assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),host);
+  for(let i=0;i<files.length;i++)assert.deepEqual(await fs.readFile(files[i]),before[i]);
+ }
 });

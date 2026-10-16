@@ -46,6 +46,18 @@ for (const platform of ['mac', 'windows']) test(`${platform}: detect current inj
     else assert.notEqual(result.status, 0, result.stdout);
   };
   detect('Standalone');
+  const shelterSettings = '{"UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter","NEW_UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter/"}';
+  await put(path.join(data, 'settings.json'), shelterSettings);
+  detect(null); // Endpoint alone is not a working Shelter installation.
+  await put(path.join(core, 'index.js'), '// SHELTUPDATE_FRAMEWORK_ORIGINAL_PRELOAD SHELTER_BUNDLE_FETCH\n' + original);
+  await put(path.join(core, 'preload.js'), '// SHELTER_BUNDLE_FETCH');
+  await put(path.join(core, 'branches.json'), '[]');
+  detect('Shelter');
+  await put(path.join(data, 'settings.json'), '{"UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter+vencord"}');
+  detect(null);
+  await put(path.join(data, 'settings.json'), '{}');
+  detect(null); // An unrecognized endpoint/loader combination stays blocked.
+  await put(path.join(core, 'index.js'), original);
   await put(path.join(data, 'app-0.0.414/modules/discord_desktop_core-1/discord_desktop_core/index.js'), betterdiscord);
   detect('Standalone'); // Ignore an old host version.
   await put(path.join(core, 'index.js'), betterdiscord);

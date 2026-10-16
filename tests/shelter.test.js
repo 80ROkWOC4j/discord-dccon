@@ -231,16 +231,16 @@ test('plugin starts after first-store retry and cleans up through the actual ent
   } finally {dom.window.close();}
 });
 
-for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
-  const events = new Map();
+for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord', 'shelter']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
+  const events = new Map(), handlers = new Map();
   const existingHeaders = () => {};
   let ready, onHeaders = existingHeaders;
-  const electron = {app: {isReady: () => alreadyReady, getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle() {}},
+  const electron = {app: {isReady: () => alreadyReady, getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle(key, fn) {handlers.set(key, fn);}},
     session: {defaultSession: {webRequest: {onHeadersReceived: fn => {onHeaders = fn;}}}},
     BrowserWindow: class {constructor(options) {this.options = options; this.webContents = {id: 7, once() {}};}}, net: {}};
   const cachedModule = {};
   Object.defineProperty(cachedModule, 'exports', {configurable: true, get: () => electron});
-  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel, hostMod}) : '{}'};
+  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel, hostMod}) : 'throw Error("addon failed")'};
   function load(name) {
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
@@ -274,8 +274,17 @@ for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Sta
     assert.throws(() => events.get('dccon:abort')({senderFrame: otherFrame, sender: {mainFrame: otherFrame}}, 1), /Untrusted/);
   }
   assert.equal(events.has('dccon:status'), false);
-  if (hostMod === 'vencord') {
-    assert.equal(onHeaders, existingHeaders, 'Vencord must retain its CSP handler');
+  if (hostMod === 'shelter') {
+    const wrapper = electron.ipcMain.handle;
+    electron.ipcMain.handle('SHELTER_BUNDLE_FETCH', async event => {assert.equal(event, 'event'); return 'globalThis.hostLoaded = true;';});
+    assert.notEqual(electron.ipcMain.handle, wrapper);
+    const errors = [], context = {console: {error: (...args) => errors.push(args)}};
+    vm.runInNewContext(await handlers.get('SHELTER_BUNDLE_FETCH')('event'), context);
+    assert.equal(context.hostLoaded, true, 'Addon bootstrap failures must not prevent Shelter from loading');
+    assert.equal(errors.length, 1);
+  }
+  if (hostMod) {
+    assert.equal(onHeaders, existingHeaders, 'Host mod must retain its CSP handler');
     assert.equal(ready, undefined);
     return;
   }
@@ -296,10 +305,10 @@ for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Sta
 
 test('preload injects only the configured channel main frame and always loads original preload', async () => {
   const source = await fs.readFile(path.join(__dirname, '../shelter/preload.cjs'), 'utf8');
-  for (const channel of ['Stable', 'Canary']) for (const allowed of [true, false]) {
+  for (const channel of ['Stable', 'Canary']) for (const allowed of [true, false]) for (const hostMod of [undefined, 'shelter']) {
     const origin = channelOptions(channel).origin, calls = [];
     let bridge, reads = 0;
-    const electron = {ipcRenderer: {sendSync: () => ({origin, originalPreload: 'original', bundle: 'bundle'})},
+    const electron = {ipcRenderer: {sendSync: () => ({origin, originalPreload: 'original', bundle: 'bundle', hostMod})},
       clipboard: {readText: () => {reads++; return 'clipboard-url';}},
       contextBridge: {exposeInMainWorld: (_, value) => {bridge = value; calls.push('bridge');}},
       webFrame: {executeJavaScript: () => {calls.push('injected'); return Promise.resolve();}}};
@@ -309,7 +318,7 @@ test('preload injects only the configured channel main frame and always loads or
         if (name === './native') return {createFiles() {}, hash() {}};
         assert.equal(name, 'original'); calls.push('original');
       }});
-    assert.deepEqual(calls, allowed ? ['bridge', 'injected', 'original'] : ['original']);
+    assert.deepEqual(calls, allowed ? (hostMod === 'shelter' ? ['bridge', 'original'] : ['bridge', 'injected', 'original']) : ['original']);
     assert.equal(reads, 0);
     if (allowed) {
       const {platform} = createShelterPlatform({plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}}, {...bridge, initialData: {}}, {});
@@ -345,9 +354,9 @@ test('late shelter plugin obtains existing webpack without wrapping its factorie
   assert.equal(chunks.push, push);
 });
 
-test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings changes', async () => {
+for (const hostMod of ['vencord', 'shelter']) test(`${hostMod} thumbnails use direct bytes and Blob URLs without CSP settings changes`, async () => {
   const calls = [];
-  const native = {hostMod: 'vencord', fetch: async (id, url, options) => {
+  const native = {hostMod, fetch: async (id, url, options) => {
     calls.push({url,options});return {status:200,headers:[['content-type','image/gif']],bytes:new Uint8Array([71,73,70])};
   }};
   const adapter = createShelterPlatform({plugin:{store:{}},ReactDOM:{}},native,{});
@@ -419,4 +428,16 @@ test('Blob thumbnails wait for intersection and ignore stale visibility callback
   images[199].componentWillUnmount();observers[199].notify(true);
   assert.equal(downloads.length,9,'Unmounted offscreen image must not download');
   for(const image of images)image.componentWillUnmount();
+});
+
+test('managed Shelter plugin removes its registration after native bridge removal, retaining host-owned data', async () => {
+  const removed = [], pending = [], store = {dcconData: {favorites: ['keep']}};
+  const shelter = {plugin: {id: 'discord-dccon', store}, plugins: {removePlugin: id => removed.push(id)}};
+  const source = require('../scripts/build.cjs').buildShelterPlugin('test');
+  const lifecycle = vm.runInNewContext(source, {shelter, queueMicrotask: fn => pending.push(fn)});
+  await lifecycle.onLoad();
+  assert.deepEqual(removed, []);
+  pending.shift()();
+  assert.deepEqual(removed, ['discord-dccon']);
+  assert.deepEqual(store.dcconData.favorites, ['keep']);
 });

@@ -20,7 +20,7 @@ export function createNativeServices(native: Bridge, cacheRoot = '/cache') {
     } finally {activeRequests.delete(id); signal?.removeEventListener('abort', abort);}
   };
   const net: Platform['net'] = {fetch: fetchNative};
-  if (native.hostMod === 'vencord') net.resolveImage = async (source, signal) => {
+  if (native.hostMod === 'vencord' || native.hostMod === 'shelter') net.resolveImage = async (source, signal) => {
     const url = new URL(source);
     const direct = url.origin === 'https://dccon-proxy.minibox.workers.dev'
       ? 'https://dcimg5.dcinside.com/dccon.php?no=' + encodeURIComponent(url.searchParams.get('no') || '') : source;

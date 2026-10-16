@@ -44,8 +44,17 @@ core_entry_state() {
     else printf 'other\n'; fi
   fi
 }
+is_shelter_core() {
+  local file=$1 core
+  core=$(dirname "$file")
+  [[ ! -d "$core/discord-dccon" ]] || file="$core/discord-dccon/original.js"
+  [[ -f "$core/preload.js" && -f "$core/branches.json" ]] &&
+    /usr/bin/grep -q 'SHELTUPDATE_FRAMEWORK_ORIGINAL_PRELOAD' "$file" &&
+    /usr/bin/grep -q 'SHELTER_BUNDLE_FETCH' "$file" &&
+    /usr/bin/grep -q 'SHELTER_BUNDLE_FETCH' "$core/preload.js"
+}
 detect_installation() {
-  local app=$1 data=$2 bd=$3 version resources entry file installed state=Standalone found=false vencord=false
+  local app=$1 data=$2 bd=$3 version resources entry file installed state=Standalone found=false vencord=false shelter=false shelter_core=false
   [[ -d "$app" ]] || fail "Discord not found: $app"
   resources="$app/Contents/Resources"
   version=$(/usr/bin/plutil -extract version raw -o - "$resources/build_info.json")
@@ -53,7 +62,10 @@ detect_installation() {
   if [[ -f "$data/settings.json" ]]; then
     for key in UPDATE_ENDPOINT NEW_UPDATE_ENDPOINT; do
       entry=$(json_value "$data/settings.json" "$key") || fail 'Invalid Discord settings.json'
-      [[ -z "$entry" ]] || fail 'Custom Discord update endpoints detected. Remove the existing client mod first.'
+      if [[ -n "$entry" ]]; then
+        [[ ${entry%/} == https://inject.shelter.uwu.network/shelter ]] || fail 'Custom Discord update endpoints detected. Remove the existing client mod first.'
+        shelter=true
+      fi
     done
   fi
   if [[ -e "$resources/app" ]]; then
@@ -77,10 +89,13 @@ detect_installation() {
   for file in "${existing[@]}"; do
     installed="$(dirname "$file")/discord-dccon"
     entry=$(core_entry_state "$file") || return 1
+    if $shelter && is_shelter_core "$file"; then shelter_core=true; fi
     if [[ -d "$installed" ]]; then
       $found && fail 'Multiple client mod loaders detected.'
       found=true
     elif [[ $entry == original ]]; then
+      :
+    elif $shelter && $shelter_core; then
       :
     elif /usr/bin/grep -q 'betterdiscord\.asar' "$file" && /usr/bin/grep -q 'core\.asar' "$file"; then
       $found && fail 'Multiple client mod loaders detected.'
@@ -95,6 +110,11 @@ detect_installation() {
   if $vencord; then
     [[ $state != BetterDiscord ]] || fail 'Multiple client mod loaders detected.'
     state=Vencord
+  fi
+  if $shelter; then
+    $shelter_core || fail 'Incomplete Shelter installation. Repair sheltupdate first.'
+    [[ $state == Standalone ]] || fail 'Multiple client mod loaders detected.'
+    state=Shelter
   fi
   printf '%s\n' "$state"
 }
@@ -130,7 +150,7 @@ install_standalone() {
     [[ -n $app_binary && $app_binary != */* ]] || fail 'Unexpected Discord executable name.'
     # Vencord already changed the signed bundle. Preserve its exact bytes.
     app_before=$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")
-  elif [[ -z $host_mod ]]; then
+  elif [[ -z $host_mod || $host_mod == shelter ]]; then
     codesign --verify --deep --strict "$app"
   else
     fail 'Unsupported standalone host mod.'
@@ -147,7 +167,11 @@ install_standalone() {
   [[ -f "$core/core.asar" && -f "$core/index.js" ]] || fail 'Incomplete Discord core module.'
   installed="$core/discord-dccon"
   entry=$(core_entry_state "$core/index.js") || return 1
-  [[ $entry != other ]] || fail 'Unknown Discord core loader.'
+  if [[ $host_mod == shelter ]]; then
+    is_shelter_core "$core/index.js" || fail 'Expected the standard sheltupdate Shelter installation.'
+  else
+    [[ $entry != other ]] || fail 'Unknown Discord core loader.'
+  fi
   if $remove && [[ ! -d "$installed" ]]; then fail 'No standalone installation in the current Discord core module.'; fi
   if $remove; then
     [[ -z $app_before || $app_before == "$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")" ]] || fail 'Vencord app changed before removal.'
@@ -170,6 +194,9 @@ install_standalone() {
   [[ $(json_value "$package/shelter-version.json" installLayout) == desktop_core ]] || fail 'This package does not use the desktop_core layout. Choose a newer release.'
   supported=$(json_value "$package/shelter-version.json" channels)
   [[ $supported == *"\"$channel\""* ]] || fail "This release does not support standalone $channel. Choose a newer release."
+  if [[ $host_mod == shelter ]]; then
+    [[ $(json_value "$package/shelter-version.json" hostMods) == *'"shelter"'* ]] || fail 'This release does not support Shelter coexistence. Choose a newer release.'
+  fi
   for file in bootstrap.js main.cjs preload.cjs native.js shared-storage.cjs; do
     [[ -f "$build/$file" ]] || fail 'Missing runtime. Use a built release package or run npm run build:packages.'
   done
@@ -177,8 +204,8 @@ install_standalone() {
 
   mkdir "$stage/runtime"
   for file in bootstrap.js main.cjs preload.cjs native.js shared-storage.cjs; do cp "$build/$file" "$stage/runtime/$file"; done
-  if [[ $host_mod == vencord ]]; then
-    printf '{"channel":"%s","hostMod":"vencord"}\n' "$channel" > "$stage/runtime/channel.json"
+  if [[ -n $host_mod ]]; then
+    printf '{"channel":"%s","hostMod":"%s"}\n' "$channel" "$host_mod" > "$stage/runtime/channel.json"
   else
     printf '{"channel":"%s"}\n' "$channel" > "$stage/runtime/channel.json"
   fi
@@ -188,8 +215,13 @@ install_standalone() {
 // discord-dccon standalone: preserve the vendor application bundle.
 try { require('./discord-dccon/runtime/main.cjs'); }
 catch (error) { console.error('[discord-dccon] Loader failed', error); }
-module.exports = require('./core.asar');
 JS
+  if [[ $host_mod == shelter ]]; then
+    # Keep sheltupdate's relative paths and __dirname in the original core directory.
+    cat "$stage/original.js" >> "$stage/index.js"
+  else
+    printf "module.exports = require('./core.asar');\n" >> "$stage/index.js"
+  fi
   hash "$stage/index.js" > "$stage/loader.sha256"
   hash "$stage/original.js" > "$stage/original.sha256"
   # Complete preparation and app validation before changing the active runtime.
@@ -217,7 +249,11 @@ JS
     [[ -z "$previous" ]] || mv "$previous" "$installed"
     rm -f "$core/index.js.installing"; fail 'Could not activate core entry; previous runtime restored.'
   fi
-  echo "Standalone installed for Discord $channel $version. Start Discord normally."
+  if [[ $host_mod == shelter ]]; then
+    echo "discord-dccon installed in existing Shelter for Discord $channel $version. Start Discord normally."
+  else
+    echo "Standalone installed for Discord $channel $version. Start Discord normally."
+  fi
   echo 'Discord core updates may require running this installer again.'
 }
 
@@ -251,6 +287,7 @@ bd="$HOME/Library/Application Support/BetterDiscord"
 detected=$(detect_installation "$app" "$data" "$bd")
 host_mod=
 if [[ $detected == Vencord ]]; then host_mod=vencord; detected=Standalone; fi
+if [[ $detected == Shelter ]]; then host_mod=shelter; detected=Standalone; fi
 [[ $mode == Auto || $mode == "$detected" ]] || fail "Detected $detected; requested $mode. Existing loaders are not replaced."
 mode=$detected
 printf 'Selected %s for Discord %s.\n' "$mode" "$channel"
