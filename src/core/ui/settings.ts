@@ -9,8 +9,9 @@ import type {Events} from '../events.ts';
 import type {MediaUI} from './media.ts';
 import {getLocaleStrings as stringsFor} from '../strings.ts';
 import {DCConProxyURL} from '../packs.ts';
-import {version} from '../../../package.json';
+import metadata from '../../../package.json' with {type: 'json'};
 import {checkForUpdate} from '../updates.ts';
+const {version} = metadata;
 export function createSettingsUI(platform: Platform, { packs, personal, sending, embedding: Embedding, events: PluginEvents, media }: {
   packs: Packs;
   personal: Personal;
