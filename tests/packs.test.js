@@ -221,7 +221,7 @@ test('settings no longer offer removed send modes', async () => {
   });
 });
 
-test('buffer expands to the left without remounting the picker and collapses when cleared', async () => {
+test('buffer stays outside the picker without remounting it and collapses when cleared', async () => {
   await scenario('discord-dccon.plugin.js', [], async ({root, DCConButton, sendDCConMessage, click, errors}) => {
     await React.act(async () => root.render(React.createElement(DCConButton, {channelId: 'side-buffer'})));
     await click(document.querySelector('[aria-label="디시콘"]'));
@@ -231,7 +231,7 @@ test('buffer expands to the left without remounting the picker and collapses whe
     await React.act(async () => { await sendDCConMessage(con, {keepOpen: true}); });
     const popup = document.querySelector('.dccon-popover-expanded');
     assert.ok(popup);
-    assert.equal(popup.firstElementChild.className, 'dccon-buffer');
+    assert.ok(popup.querySelector(':scope > .dccon-buffer'));
     assert.equal(document.querySelector('.dccon-pickerContainer'), picker);
     assert.equal(picker.querySelector('.dccon-buffer'), null);
     assert.equal(popup.style.height, height);
