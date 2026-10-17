@@ -92,11 +92,38 @@ OPTIONS
     -remove, --remove
         디시콘 제거. 설정·캐시와 BetterDiscord 자체는 유지.
 
+    -purge, --purge
+        모든 채널의 애드온과 현재·구버전 데이터를 완전 삭제.
+        삭제 대상을 표시하고 PURGE 입력으로 확인. 다른 설치 옵션과 함께 사용 불가.
+
+    -dryrun, --dry-run
+        purge와 함께 사용. 삭제 대상만 확인하며 파일은 변경하지 않음.
+
+    -yes, --yes
+        purge와 함께 사용. 삭제 확인 입력을 생략.
+
     -discordroot <path>
         Windows 전용. Discord 설치 경로를 직접 지정.
 
     -pluginsdirectory <path>
         Windows 전용. BetterDiscord 플러그인 폴더를 직접 지정.
+```
+
+### 설정·캐시까지 완전 삭제
+
+다운로드한 설치 스크립트의 `purge` 옵션을 사용합니다. **Stable·PTB·Canary 전체**의 애드온을 제거하고 설정, 등록 목록, 즐겨찾기, 직접 추가한 이미지 원본, 캐시, 모델·벡터와 마이그레이션 백업을 삭제합니다. 모든 Discord를 완전히 종료하고 실행하세요. 먼저 삭제 대상만 확인할 수 있습니다.
+
+```powershell
+# Windows: 미리보기 → 실제 삭제 (PURGE 입력으로 확인)
+powershell -noprofile -executionpolicy bypass -file .\install.ps1 -purge -dryrun
+powershell -noprofile -executionpolicy bypass -file .\install.ps1 -purge
+```
+
+```sh
+# macOS: 스크립트를 파일로 저장한 뒤 실행
+curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh -o install.sh
+bash install.sh --purge --dry-run
+bash install.sh --purge
 ```
 
 </details>

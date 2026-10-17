@@ -141,6 +141,23 @@ install_betterdiscord() {
   echo 'discord-dccon installed. Enable it in Discord Settings > BetterDiscord > Plugins.'
 }
 
+remove_core_addon() {
+  local core=$1 installed="$1/discord-dccon" archive="$1/discord-dccon-removed-$(uuidgen)"
+  purge_check_path "$archive" "$core"
+  [[ ! -e $core/index.js.restoring && ! -L $core/index.js.restoring ]] || fail "Restore temporary file already exists: $core/index.js.restoring"
+  if ! cp "$installed/original.js" "$core/index.js.restoring"; then
+    rm -f "$core/index.js.restoring"; fail 'Could not prepare original core entry.'
+  fi
+  if ! mv "$installed" "$archive"; then
+    rm -f "$core/index.js.restoring"; fail 'Could not archive installed runtime.'
+  fi
+  if ! mv "$core/index.js.restoring" "$core/index.js"; then
+    mv "$archive" "$installed"
+    rm -f "$core/index.js.restoring"; fail 'Could not restore original core entry; runtime restored.'
+  fi
+  printf '%s\n' "$archive"
+}
+
 install_standalone() {
   local host_mod=${1:-} app_before= app_binary vencord_patcher
   if [[ $host_mod == vencord ]]; then
@@ -175,17 +192,8 @@ install_standalone() {
   if $remove && [[ ! -d "$installed" ]]; then fail 'No standalone installation in the current Discord core module.'; fi
   if $remove; then
     [[ -z $app_before || $app_before == "$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")" ]] || fail 'Vencord app changed before removal.'
-    if ! cp "$installed/original.js" "$core/index.js.restoring"; then
-      rm -f "$core/index.js.restoring"; fail 'Could not prepare original core entry.'
-    fi
-    local archive="$core/discord-dccon-removed-$(uuidgen)"
-    if ! mv "$installed" "$archive"; then
-      rm -f "$core/index.js.restoring"; fail 'Could not archive installed runtime.'
-    fi
-    if ! mv "$core/index.js.restoring" "$core/index.js"; then
-      mv "$archive" "$installed"
-      rm -f "$core/index.js.restoring"; fail 'Could not restore original core entry; runtime restored.'
-    fi
+    local archive
+    archive=$(remove_core_addon "$core") || return 1
     echo 'Standalone removed. Original Discord module restored; user data preserved.'
     return
   fi
@@ -257,19 +265,139 @@ JS
   echo 'Discord core updates may require running this installer again.'
 }
 
+purge_check_path() {
+  local target=$1 root=${2%/} ancestor
+  [[ $target == "$root/"* && $target != *'/../'* && $target != *'/./'* && $target == /* ]] || fail "Unsafe purge path: $target"
+  ancestor=$target
+  while [[ -n $ancestor && $ancestor != / ]]; do
+    [[ ! -L $ancestor ]] || fail "Linked path requires manual cleanup: $ancestor"
+    ancestor=${ancestor%/*}
+  done
+}
+purge_check_tree() {
+  purge_check_path "$1" "$2"
+  [[ -e $1 ]] || return 0
+  local link
+  link=$(find "$1" -type l -print -quit) || return 1
+  [[ -z $link ]] || fail "Linked path requires manual cleanup: $link"
+}
+purge_add() {
+  purge_check_tree "$1" "$2" || return 1
+  [[ -e $1 ]] || return 0
+  purge_paths+=("$1"); purge_roots+=("$2")
+}
+purge_archives() {
+  local parent=$1 root=$2 candidate name
+  for candidate in "$parent"/discord-dccon-{removed,previous}-* "$parent"/.discord-dccon-stage.*; do
+    [[ -e $candidate || -L $candidate ]] || continue
+    name=${candidate##*/}
+    [[ $name =~ ^discord-dccon-(removed|previous)-[a-fA-F0-9-]{36}$ || $name =~ ^\.discord-dccon-stage\.[a-zA-Z0-9]{6}$ ]] || continue
+    purge_check_tree "$candidate" "$root" || return 1
+    [[ -f $candidate/original.sha256 && -f $candidate/loader.sha256 && -f $candidate/original.js && -f $candidate/index.js ]] || fail "Unrecognized runtime archive: $candidate"
+    [[ $(hash "$candidate/original.js") == "$(cat "$candidate/original.sha256")" && $(hash "$candidate/index.js") == "$(cat "$candidate/loader.sha256")" ]] || fail "Modified runtime archive: $candidate"
+    purge_add "$candidate" "$root"
+  done
+}
+purge_all() {
+  local support="$HOME/Library/Application Support" plugins client base folder module core addon file name entry reply i archive failed=false
+  local purge_paths=() purge_roots=() purge_cores=() purge_core_roots=()
+  shopt -s nullglob
+  for client in discord discordptb discordcanary; do
+    base="$support/$client"
+    purge_check_path "$base" "$support"
+    for folder in "$base"/*; do
+      name=${folder##*/}
+      [[ $name =~ ^(app-)?[0-9]+(\.[0-9]+)+$ ]] || continue
+      purge_check_path "$folder/modules" "$base"
+      for module in "$folder/modules/"discord_desktop_core*; do
+        name=${module##*/}
+        [[ $name =~ ^discord_desktop_core(-[0-9]+)?$ ]] || continue
+        for core in "$module" "$module/discord_desktop_core"; do
+          purge_check_path "$core" "$base"
+          addon="$core/discord-dccon"
+          purge_check_path "$core/index.js" "$base"
+          if [[ -e $addon || -L $addon ]]; then
+            purge_check_tree "$addon" "$base"
+            entry=$(core_entry_state "$core/index.js") || return 1
+            purge_cores+=("$core"); purge_core_roots+=("$base")
+          elif [[ -f $core/index.js ]] && /usr/bin/grep -Fq './discord-dccon/runtime/main.cjs' "$core/index.js"; then
+            fail "Missing standalone backup: $core/index.js"
+          fi
+          purge_archives "$core" "$base"
+        done
+      done
+    done
+  done
+  for name in discord-dccon discord-dccon-canary DCCon-shelter DCCon-shelter-poc; do purge_add "$support/$name" "$support"; done
+  plugins="$support/BetterDiscord/plugins"
+  purge_check_path "$plugins" "$support"
+  for name in discord-dccon-cache discord-dccon-library DCCon-cache; do purge_add "$plugins/$name" "$plugins"; done
+  for file in "$plugins"/*; do
+    name=${file##*/}
+    if [[ $name =~ ^(discord-dccon|DCCon)\.(plugin\.js|config\.json)(\.(backup|removed)-[a-fA-F0-9-]{36})?$ || $name == discord-dccon.plugin.js.installing ]]; then
+      purge_add "$file" "$plugins"
+    fi
+  done
+  echo 'Purge scope: all Discord channels, current and historical discord-dccon/DCCon data for this user.'
+  for ((i=0; i<${#purge_cores[@]}; i++)); do printf 'RESTORE original loader, DELETE addon: %s\n' "${purge_cores[i]}/discord-dccon"; done
+  for ((i=0; i<${#purge_paths[@]}; i++)); do printf 'DELETE: %s\n' "${purge_paths[i]}"; done
+  echo 'Browser/userscript and old Shelter IndexedDB settings are not removed. Clear this addon in its script/plugin manager; Discord profiles and other mods are preserved.'
+  if [[ ${#purge_paths[@]} == 0 && ${#purge_cores[@]} == 0 ]]; then echo 'No known filesystem installation or data found.'; return; fi
+  if $dryrun; then echo 'Dry run only. No files changed.'; return; fi
+  for client in Discord 'Discord PTB' 'Discord Canary'; do
+    if pgrep -x "$client" >/dev/null; then fail 'Fully quit all Discord channels before purging.'; fi
+  done
+  if ! $yes; then
+    printf 'Permanently delete settings, saved cons, personal images and caches? Type PURGE: '
+    if ! read -r reply </dev/tty; then fail 'No interactive terminal. Use --purge --dry-run first, then --purge --yes.'; fi
+    if [[ $reply != PURGE ]]; then echo 'Cancelled. No files changed.'; return; fi
+  fi
+  for ((i=0; i<${#purge_paths[@]}; i++)); do purge_check_tree "${purge_paths[i]}" "${purge_roots[i]}"; done
+  for ((i=0; i<${#purge_cores[@]}; i++)); do
+    core=${purge_cores[i]}
+    purge_check_tree "$core/discord-dccon" "${purge_core_roots[i]}"
+    purge_check_path "$core/index.js" "${purge_core_roots[i]}"
+    entry=$(core_entry_state "$core/index.js") || return 1
+  done
+  # Restore every active loader before deleting any shared data or backups.
+  for ((i=0; i<${#purge_cores[@]}; i++)); do
+    core=${purge_cores[i]}
+    archive=$(remove_core_addon "$core") || return 1
+    purge_paths+=("$archive"); purge_roots+=("${purge_core_roots[i]}")
+  done
+  for ((i=0; i<${#purge_paths[@]}; i++)); do
+    file=${purge_paths[i]}
+    purge_check_tree "$file" "${purge_roots[i]}"
+    if rm -rf "$file"; then printf 'Deleted: %s\n' "$file";
+    else printf 'Could not delete: %s\n' "$file" >&2; failed=true; fi
+  done
+  if $failed; then fail 'Some paths could not be deleted; rerun after resolving them.'; fi
+  echo 'Purge complete for the listed filesystem paths.'
+}
+
 # Online entry point.
 [[ $(uname -s) == Darwin ]] || fail 'This installer requires macOS.'
-mode=Auto; channel=Stable; version=; remove=false
+mode=Auto; channel=Stable; version=; remove=false; purge=false; dryrun=false; yes=false; scoped=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode|--channel|--version)
+      scoped=true
       [[ $# -ge 2 ]] || fail "Missing value for $1"
       case "$1" in --mode) mode=$2;; --channel) channel=$2;; --version) version=$2;; esac
       shift 2 ;;
     --remove) remove=true; shift ;;
-    *) fail 'Usage: bash install.sh [--mode auto|betterdiscord|standalone] [--channel stable|ptb|canary] [--version vX.Y.Z] [--remove]' ;;
+    --purge) purge=true; shift ;;
+    --dry-run) dryrun=true; shift ;;
+    --yes) yes=true; shift ;;
+    *) fail 'Usage: bash install.sh [--mode auto|betterdiscord|standalone] [--channel stable|ptb|canary] [--version vX.Y.Z] [--remove] [--purge [--dry-run|--yes]]' ;;
   esac
 done
+if $purge; then
+  if $remove || $scoped; then fail '--purge covers all channels; do not combine it with --remove, --channel, --mode or --version.'; fi
+  purge_all
+  exit
+fi
+if $dryrun || $yes; then fail '--dry-run and --yes require --purge.'; fi
 case "$mode" in
   auto|Auto) mode=Auto ;;
   betterdiscord|BetterDiscord) mode=BetterDiscord ;;

@@ -4,6 +4,9 @@ param(
     [ValidateSet('auto', 'betterdiscord', 'standalone')][string]$mode = 'auto',
     [string]$version,
     [Alias('restore')][switch]$remove,
+    [switch]$purge,
+    [switch]$dryrun,
+    [switch]$yes,
     [ValidateSet('stable', 'ptb', 'canary')][string]$channel = 'stable',
     [string]$discordroot,
     [string]$pluginsdirectory = (Join-Path $env:APPDATA 'BetterDiscord/plugins')
@@ -61,10 +64,10 @@ function Test-VencordArchive([string]$Resources, [string]$Archive = '') {
     throw 'Unknown app.asar loader beside _app.asar. Only the standard Vencord installer layout is supported.'
 }
 
-function Get-LegacyStandalone([string]$Resources) {
+function Get-LegacyStandalone([string]$Resources, [string]$Prefix = 'discord-dccon') {
     $app = Join-Path $Resources 'app'
-    $manifest = Join-Path $app 'discord-dccon-install.json'
-    $original = Join-Path $Resources 'discord-dccon-original.asar'
+    $manifest = Join-Path $app ($Prefix + '-install.json')
+    $original = Join-Path $Resources ($Prefix + '-original.asar')
     if (!(Test-Path -LiteralPath $manifest) -and !(Test-Path -LiteralPath $original)) {return $null}
     $asar = Join-Path $Resources 'app.asar'
     if (!(Test-Path -LiteralPath $manifest -PathType Leaf) -or !(Test-Path -LiteralPath $original -PathType Leaf) -or (Test-Path -LiteralPath $asar)) {
@@ -72,7 +75,7 @@ function Get-LegacyStandalone([string]$Resources) {
     }
     $record = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
     $installedChannel = if ($record.channel) {$record.channel} else {'Stable'}
-    if ($record.kind -ne 'discord-dccon-standalone' -or $installedChannel -ne $Channel -or
+    if ($record.kind -ne ($Prefix + '-standalone') -or $installedChannel -ne $Channel -or
         (Get-FileHash -LiteralPath $original).Hash -ne $record.originalHash) {throw 'Legacy installation record or original archive changed. No files were changed.'}
     foreach ($file in @('index.js', 'package.json')) {
         if ((Get-FileHash -LiteralPath (Join-Path $app $file)).Hash -ne $record.$file) {throw "Modified legacy loader: $file. No files were changed."}
@@ -80,7 +83,23 @@ function Get-LegacyStandalone([string]$Resources) {
     return @{app=$app;original=$original;asar=$asar;archive=(Join-Path $Resources ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N')))}
 }
 
+function Remove-CoreAddon([string]$Index) {
+    $core = Split-Path $Index
+    $installed = Join-Path $core 'discord-dccon'
+    $temporary = Join-Path $core ('dccon-entry-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    $archive = Join-Path $core ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N'))
+    Assert-PurgePath $archive $core
+    Move-Item -LiteralPath $installed -Destination $archive
+    try {
+        Copy-Item -LiteralPath (Join-Path $archive 'original.js') -Destination $temporary
+        [IO.File]::Replace($temporary, $Index, [System.Management.Automation.Language.NullString]::Value)
+    } catch {Move-Item -LiteralPath $archive -Destination $installed; throw}
+    finally {if (Test-Path -LiteralPath $temporary) {Remove-Item -LiteralPath $temporary}}
+    return $archive
+}
+
 function Remove-LegacyStandalone($Legacy) {
+    Assert-PurgePath $Legacy.archive (Split-Path $Legacy.app)
     Move-Item -LiteralPath $Legacy.app -Destination $Legacy.archive
     try {Move-Item -LiteralPath $Legacy.original -Destination $Legacy.asar}
     catch {Move-Item -LiteralPath $Legacy.archive -Destination $Legacy.app; throw}
@@ -153,13 +172,7 @@ function Install-Standalone([string]$PackageDirectory, [string]$HostMod = '') {
     if ($Remove -and !$record) {throw 'No discord-dccon installation in the current desktop_core.'}
     $temporary = Join-Path $core ('dccon-entry-' + [guid]::NewGuid().ToString('N') + '.tmp')
     if ($Remove) {
-        $archive = Join-Path $core ('discord-dccon-removed-' + [guid]::NewGuid().ToString('N'))
-        Move-Item -LiteralPath $installed -Destination $archive
-        try {
-            Copy-Item -LiteralPath (Join-Path $archive 'original.js') -Destination $temporary
-            [IO.File]::Replace($temporary, $index, [System.Management.Automation.Language.NullString]::Value)
-        } catch {Move-Item -LiteralPath $archive -Destination $installed; throw}
-        finally {if (Test-Path -LiteralPath $temporary) {Remove-Item -LiteralPath $temporary}}
+        $null = Remove-CoreAddon $index
         Write-Output 'discord-dccon removed. The original desktop_core entry, host mods and user data were preserved.'
         return
     }
@@ -271,8 +284,160 @@ function Get-InstallationMode([string]$Root, [string]$DataRoot) {
     if ($states -contains 'Shelter') {return 'Shelter'}
     return 'Standalone'
 }
+# Purge only named application-owned paths. Never follow junctions/symlinks,
+# including ancestors of a candidate, into another installation or profile.
+function Assert-PurgePath([string]$Path, [string]$Root) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $prefix = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (!$full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {throw "Purge path escapes its root: $full"}
+    $ancestor = $full
+    while ($ancestor) {
+        if (Test-Path -LiteralPath $ancestor) {
+            if ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {throw "Linked path requires manual cleanup: $ancestor"}
+        }
+        $ancestor = [IO.Path]::GetDirectoryName($ancestor)
+    }
+}
+function Assert-PurgeTree([string]$Path, [string]$Root) {
+    Assert-PurgePath $Path $Root
+    if ((Get-Item -LiteralPath $Path -Force).PSIsContainer) {
+        foreach ($child in Get-ChildItem -LiteralPath $Path -Force) {Assert-PurgeTree $child.FullName $Root}
+    }
+}
+function Invoke-Purge {
+    $deletions = [Collections.Generic.List[object]]::new()
+    $restores = [Collections.Generic.List[object]]::new()
+    $failures = [Collections.Generic.List[string]]::new()
+    function Add-PurgeTarget([string]$Path, [string]$Root) {
+        Assert-PurgePath $Path $Root
+        if (!(Test-Path -LiteralPath $Path)) {return}
+        Assert-PurgeTree $Path $Root
+        if (!($deletions | Where-Object {$_.path -eq $Path})) {$deletions.Add(@{path=$Path;root=$Root})}
+    }
+    function Add-PurgeArchives([string]$Parent, [string]$Root) {
+        if (!(Test-Path -LiteralPath $Parent)) {return}
+        Assert-PurgePath $Parent $Root
+        foreach ($item in Get-ChildItem -LiteralPath $Parent -Force) {
+            if ($item.Name -notmatch '^(?:discord-dccon|dccon)-(?:previous|removed|stage)-[a-f0-9]{32}$') {continue}
+            Assert-PurgeTree $item.FullName $Root
+            $manifest = @('discord-dccon-install.json', 'dccon-install.json') | ForEach-Object {Join-Path $item.FullName $_} | Where-Object {Test-Path -LiteralPath $_}
+            if (@($manifest).Count -ne 1) {throw "Unrecognized runtime archive: $($item.FullName)"}
+            $record = Get-Content -LiteralPath @($manifest)[0] -Raw | ConvertFrom-Json
+            if ($record.kind -notin @('discord-dccon-core', 'discord-dccon-standalone', 'dccon-standalone')) {throw "Unrecognized runtime archive: $($item.FullName)"}
+            $hashes = if ($record.kind -eq 'discord-dccon-core') {@{'original.js'=$record.originalHash;'index.js'=$record.loaderHash}} else {@{'index.js'=$record.'index.js';'package.json'=$record.'package.json'}}
+            foreach ($name in $hashes.Keys) {
+                if ($hashes[$name] -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath (Join-Path $item.FullName $name)).Hash -ne $hashes[$name]) {throw "Modified runtime archive: $($item.FullName)"}
+            }
+            Add-PurgeTarget $item.FullName $Root
+        }
+    }
+    foreach ($client in @('Discord', 'DiscordPTB', 'DiscordCanary')) {
+        $Channel = switch ($client) {'DiscordPTB' {'PTB'} 'DiscordCanary' {'Canary'} default {'Stable'}}
+        $root = Join-Path $env:LOCALAPPDATA $client
+        $dataRoot = Join-Path $env:APPDATA $client.ToLowerInvariant()
+        foreach ($base in @($root, $dataRoot)) {
+            try {
+                Assert-PurgePath $base (Split-Path $base)
+                if (!(Test-Path -LiteralPath $base)) {continue}
+                foreach ($folder in Get-ChildItem -LiteralPath $base -Directory) {
+                    if ($folder.Name -notmatch '^(?:app-)?\d+(\.\d+)+$') {continue}
+                    Assert-PurgePath $folder.FullName $base
+                    $resources = Join-Path $folder.FullName 'resources'
+                    if ($base -eq $root -and (Test-Path -LiteralPath $resources)) {
+                        Assert-PurgePath $resources $base
+                        foreach ($prefix in @('discord-dccon', 'dccon')) {
+                            $app = Join-Path $resources 'app'
+                            if ((Test-Path -LiteralPath (Join-Path $app ($prefix + '-install.json'))) -or (Test-Path -LiteralPath (Join-Path $resources ($prefix + '-original.asar')))) {
+                                Assert-PurgeTree $app $base
+                                Assert-PurgePath (Join-Path $resources ($prefix + '-original.asar')) $base
+                                $legacy = Get-LegacyStandalone $resources $prefix
+                                $restores.Add(@{kind='legacy';path=$app;root=$base;channel=$Channel;resources=$resources;prefix=$prefix;legacy=$legacy})
+                            }
+                        }
+                        Add-PurgeArchives $resources $base
+                    }
+                    $modules = Join-Path $folder.FullName 'modules'
+                    Assert-PurgePath $modules $base
+                    if (!(Test-Path -LiteralPath $modules)) {continue}
+                    foreach ($module in Get-ChildItem -LiteralPath $modules -Directory) {
+                        if ($module.Name -notmatch '^discord_desktop_core(?:-\d+)?$') {continue}
+                        foreach ($core in @($module.FullName, (Join-Path $module.FullName 'discord_desktop_core'))) {
+                            Assert-PurgePath $core $base
+                            $addon = Join-Path $core 'discord-dccon'
+                            $index = Join-Path $core 'index.js'
+                            Assert-PurgePath $index $base
+                            if (Test-Path -LiteralPath $addon) {
+                                Assert-PurgeTree $addon $base
+                                $null = Get-CoreEntryState $index
+                                $restores.Add(@{kind='core';path=$addon;root=$base;channel=$Channel;index=$index})
+                            } elseif ((Test-Path -LiteralPath $index) -and (Get-Content -LiteralPath $index -Raw).Contains('./discord-dccon/runtime/main.cjs')) {
+                                throw "Missing standalone backup: $index"
+                            }
+                            Add-PurgeArchives $core $base
+                        }
+                    }
+                }
+            } catch {$failures.Add($_.Exception.Message)}
+        }
+    }
+    foreach ($name in @('discord-dccon', 'discord-dccon-canary', 'DCCon-shelter', 'DCCon-shelter-poc')) {
+        try {Add-PurgeTarget (Join-Path $env:APPDATA $name) $env:APPDATA} catch {$failures.Add($_.Exception.Message)}
+    }
+    foreach ($plugins in @((Join-Path $env:APPDATA 'BetterDiscord/plugins'), [IO.Path]::GetFullPath($PluginsDirectory)) | Select-Object -Unique) {
+        try {
+            Assert-PurgePath $plugins (Split-Path $plugins)
+            if (!(Test-Path -LiteralPath $plugins)) {continue}
+            foreach ($name in @('discord-dccon-cache', 'discord-dccon-library', 'DCCon-cache')) {Add-PurgeTarget (Join-Path $plugins $name) $plugins}
+            foreach ($file in Get-ChildItem -LiteralPath $plugins -Force) {
+                if ($file.Name -match '^(?:discord-dccon|DCCon)\.(?:plugin\.js|config\.json)(?:\.(?:backup|removed)-[a-f0-9]{32})?$' -or $file.Name -eq 'discord-dccon.plugin.js.installing') {
+                    Add-PurgeTarget $file.FullName $plugins
+                }
+            }
+        } catch {$failures.Add($_.Exception.Message)}
+    }
+    Write-Host 'Purge scope: all Discord channels, current and historical discord-dccon/DCCon data for this user.'
+    foreach ($item in $restores) {Write-Host "RESTORE original loader, DELETE addon: $($item.path)"}
+    foreach ($item in $deletions) {Write-Host "DELETE: $($item.path)"}
+    Write-Host 'Browser/userscript and old Shelter IndexedDB settings are not removed. Clear this addon in its script/plugin manager; Discord profiles and other mods are preserved.'
+    if ($failures.Count) {throw ("Purge blocked; no files changed:`n" + ($failures -join "`n"))}
+    if (!$restores.Count -and !$deletions.Count) {Write-Host 'No known filesystem installation or data found.'; return}
+    if ($DryRun) {Write-Host 'Dry run only. No files changed.'; return}
+    if (Get-Process -Name Discord,DiscordPTB,DiscordCanary -ErrorAction SilentlyContinue) {throw 'Fully quit all Discord channels before purging.'}
+    if (!$Yes -and (Read-Host 'Permanently delete settings, saved cons, personal images and caches? Type PURGE') -cne 'PURGE') {Write-Host 'Cancelled. No files changed.'; return}
+    # Validate every candidate again before the first write, then detach loaders
+    # before deleting shared data. A failed restore preserves all remaining data.
+    foreach ($item in $deletions) {Assert-PurgeTree $item.path $item.root}
+    foreach ($item in $restores) {
+        $Channel = $item.channel
+        Assert-PurgeTree $item.path $item.root
+        if ($item.kind -eq 'core') {Assert-PurgePath $item.index $item.root; $null = Get-CoreEntryState $item.index}
+        else {Assert-PurgePath $item.legacy.original $item.root; $null = Get-LegacyStandalone $item.resources $item.prefix}
+    }
+    foreach ($item in $restores) {
+        if ($item.kind -eq 'core') {$archive = Remove-CoreAddon $item.index}
+        else {Remove-LegacyStandalone $item.legacy; $archive = $item.legacy.archive}
+        $deletions.Add(@{path=$archive;root=$item.root})
+    }
+    foreach ($item in $deletions) {
+        try {
+            Assert-PurgeTree $item.path $item.root
+            Remove-Item -LiteralPath ([IO.Path]::GetFullPath($item.path)) -Recurse -Force
+            Write-Host "Deleted: $($item.path)"
+        } catch {$failures.Add("$($item.path): $($_.Exception.Message)")}
+    }
+    if ($failures.Count) {throw ("Some paths could not be deleted; rerun after resolving them:`n" + ($failures -join "`n"))}
+    Write-Host 'Purge complete for the listed filesystem paths.'
+}
 $Mode = switch ($Mode) { 'betterdiscord' {'BetterDiscord'} 'standalone' {'Standalone'} default {'Auto'} }
 $Channel = switch ($Channel) { 'PTB' {'PTB'} 'Canary' {'Canary'} default {'Stable'} }
+if ($Purge) {
+    foreach ($option in @('remove', 'mode', 'channel', 'version', 'discordroot')) {
+        if ($PSBoundParameters.ContainsKey($option)) {throw "-purge covers all channels; do not combine it with -$option."}
+    }
+    Invoke-Purge
+    return
+}
+if ($DryRun -or $Yes) {throw '-dryrun and -yes require -purge.'}
 $client = switch ($Channel) { 'PTB' {'DiscordPTB'} 'Canary' {'DiscordCanary'} default {'Discord'} }
 if (!$DiscordRoot) {$DiscordRoot = Join-Path $env:LOCALAPPDATA $client}
 $DiscordRoot = [IO.Path]::GetFullPath($DiscordRoot)

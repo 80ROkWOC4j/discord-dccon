@@ -4,7 +4,7 @@ import {createShelterPlatform} from '../platform/shelter.ts';
 import type {NativeBridge, ModuleLookup} from '../platform/types.ts';
 type Host = Parameters<typeof createShelterPlatform>[0] & {
   plugin: {id: string; flushStore(): void};
-  plugins: {stopPlugin(id: string): void; startPlugin(id: string): void; removePlugin(id: string): void};
+  plugins: {installedPlugins(): Record<string, unknown>; stopPlugin(id: string): void; startPlugin(id: string): void; removePlugin(id: string): void};
 };
 export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge | undefined,
   dcconWebpack: ModuleLookup & {isReady?(): boolean; storageRetried?: boolean}, dcconVersion: string) {
@@ -41,6 +41,11 @@ export function createShelterPlugin(shelter: Host, DCConNative: NativeBridge | u
       return;
     }
     try {
+      // Shelter snapshots its startup list. Let it finish before removing an ID
+      // that may still be scheduled to start; removePlugin also stops it.
+      await Promise.resolve();
+      if (disposed) return;
+      if (shelter.plugins.installedPlugins()['dccon-poc']) shelter.plugins.removePlugin('dccon-poc');
       // This pinned shelter build returns a plain object when a plugin store is
       // first created (??= returns its RHS). Restart once to obtain its proxy.
       try {shelter.plugin.flushStore();}
