@@ -6,7 +6,8 @@ const executablePath = [process.env.WEBP_TEST_BROWSER, chromium.executablePath()
 function api(extra = {}) {
   const context = { module: { exports: {} }, URL, Blob, File, BdApi: { React: { Component: class {
   } }, Webpack: { getByKeys: () => ({}), getModule: () => ({}), Filters: { byKeys: () => () => true } } }, ...extra };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../discord-dccon.plugin.js"), "utf8") + "\nmodule.exports={WebPCache,animationTiming,mergeAnimationReason,mergeAnimatedImages,getMergedImage,BdApi,setMergeForTest: value => {mergeAnimatedImages = value;}};", context);
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.BdApi = context.BdApi;
   return context.module.exports;
 }
 
@@ -110,7 +111,7 @@ test('cancelled merged requests cannot write a cache and a later request can ret
   await h.getMergedImage(entries, () => {});
   assert.equal(fs.readdirSync(path.join(folder, 'cache', 'merged')).length, 1);
 });
-test("merge eligibility requires 2-3 animations with identical duration and repetitions and caches metadata", async () => {
+test("merge eligibility accepts stills and mixed inputs while validating animated timing", async () => {
   const timings = { 1: [80, 120], 2: [50, 150], 3: [50, 100], 4: [200], 5: [80, 120] };
   let closed = 0, created = 0;
   class ImageDecoder2 {
@@ -127,24 +128,28 @@ test("merge eligibility requires 2-3 animations with identical duration and repe
       closed++;
     }
   }
-  const { mergeAnimationReason, mergeAnimatedImages, WebPCache } = api({ ImageDecoder: ImageDecoder2 });
+  const { mergeImageReason, mergeImages, WebPCache } = api({ ImageDecoder: ImageDecoder2 });
   const files = [1, 2, 3, 4, 5].map((n) => new File([new Uint8Array([n])], "con.webp", { type: "image/webp" }));
-  assert.equal(await mergeAnimationReason(files.slice(0, 2)), "");
-  assert.equal(await mergeAnimationReason(files.slice(0, 2)), "");
+  assert.equal(await mergeImageReason(files.slice(0, 2)), "");
+  assert.equal(await mergeImageReason(files.slice(0, 2)), "");
   assert.equal(created, 2);
-  assert.match(await mergeAnimationReason([files[0], files[2]]), /재생 길이/);
-  assert.match(await mergeAnimationReason([files[0], files[3]]), /애니메이션 이미지/);
-  assert.match(await mergeAnimationReason([files[0], files[4]]), /반복 횟수/);
-  assert.match(await mergeAnimationReason([files[0]]), /2~3개/);
-  assert.match(await mergeAnimationReason(files.slice(0, 4)), /2~3개/);
+  assert.match(await mergeImageReason([files[0], files[2]]), /재생 길이/);
+  assert.equal(await mergeImageReason([files[0], files[3]]), "");
+  assert.equal(await mergeImageReason([files[3], files[3]]), "");
+  assert.equal(await mergeImageReason([files[3], files[0], files[1]]), "");
+  assert.match(await mergeImageReason([files[3], files[0], files[2]]), /재생 길이/);
+  assert.match(await mergeImageReason([files[3], files[0], files[4]]), /반복 횟수/);
+  assert.match(await mergeImageReason([files[0], files[4]]), /반복 횟수/);
+  assert.match(await mergeImageReason([files[0]]), /2~3개/);
+  assert.match(await mergeImageReason(files.slice(0, 4)), /2~3개/);
   let merges = 0;
   WebPCache.merge = async () => {
     merges++;
     throw Error("must not encode");
   };
-  await assert.rejects(mergeAnimatedImages([files[0], files[2]], () => {
+  await assert.rejects(mergeImages([files[0], files[2]], () => {
   }), /재생 길이/);
-  await assert.rejects(mergeAnimatedImages(files.slice(0, 2), () => {
+  await assert.rejects(mergeImages(files.slice(0, 2), () => {
     throw Error("cancelled");
   }), /cancelled/);
   assert.equal(merges, 0);
@@ -247,8 +252,15 @@ test("real merge preserves 2-3 animation pixels, unequal frame schedules, origin
     try {
       const a = await make(2, 2, ["red", "blue"], [100, 100]), b = await make(1, 4, ["lime", "yellow"], [50, 150]), c = await make(2, 2, ["white", "black", "magenta"], [50, 50, 100]);
       const two = await decode(await merge([a, b])), three = await decode(await merge([a, b, c]));
+      const still = await make(1, 4, ["lime"], [100]);
+      const small = await make(2, 2, ["red"], [100]);
+      const stillTwo = await decode(await merge([small, still]));
+      const stillThree = await decode(await merge([small, still, small]));
+      const mixed = await decode(await merge([small, b, c]));
+      const mixedLast = await decode(await merge([a, still]));
+      const infinite = await decode(await merge([still, await make(2, 2, ["red", "blue"], [100, 100], 0)]));
       const failures = [];
-      for (const images of [[a], [a, b, c, a], [a, await make(2, 2, ["red", "blue"], [100, 150])], [a, await make(2, 2, ["red", "blue"], [100, 100], 2)], [a, await make(2, 2, ["red"], [200])]]) {
+      for (const images of [[a], [a, b, c, a], [a, await make(2, 2, ["red", "blue"], [100, 150])], [a, await make(2, 2, ["red", "blue"], [100, 100], 2)], [small, a, await make(2, 2, ["red", "blue"], [100, 150])], [small, a, await make(2, 2, ["red", "blue"], [100, 100], 2)]]) {
         try {
           await merge(images);
           failures.push("accepted");
@@ -257,7 +269,7 @@ test("real merge preserves 2-3 animation pixels, unequal frame schedules, origin
         }
       }
       const reused = await decode(await merge([a, b]));
-      return { two, three, reused, failures };
+      return { two, three, stillTwo, stillThree, mixed, mixedLast, infinite, reused, failures };
     } finally {
       codecWorker.terminate();
       mergeWorker.terminate();
@@ -295,5 +307,47 @@ test("real merge preserves 2-3 animation pixels, unequal frame schedules, origin
   assert.match(result.failures[1], /2~3개/);
   assert.match(result.failures[2], /재생 길이/);
   assert.match(result.failures[3], /반복 횟수/);
-  assert.match(result.failures[4], /애니메이션 이미지/);
+  assert.match(result.failures[4], /재생 길이/);
+  assert.match(result.failures[5], /반복 횟수/);
+  for (const [key, width] of [["stillTwo", 3], ["stillThree", 5]]) {
+    assert.equal(result[key].frames.length, 1);
+    const frame = result[key].frames[0], expected = [];
+    assert.equal(frame.width, width); assert.equal(frame.height, 4);
+    for (let y = 0; y < 4; y++) {
+      const side = y === 1 || y === 2 ? red : transparent;
+      expected.push(...side, ...side, ...lime);
+      if (width === 5) expected.push(...side, ...side);
+    }
+    assert.deepEqual(frame.pixels, expected);
+  }
+  assert.equal(result.mixed.repetitionCount, 2);
+  assert.deepEqual(result.mixed.frames.map(f => f.duration), [50000, 50000, 100000]);
+  for (let i = 0; i < 3; i++) {
+    const expected = [];
+    for (let y = 0; y < 4; y++) {
+      const first = y === 1 || y === 2 ? red : transparent;
+      const last = y === 1 || y === 2 ? [white, black, magenta][i] : transparent;
+      expected.push(...first, ...first, ...(i === 0 ? lime : yellow), ...last, ...last);
+    }
+    assert.deepEqual(result.mixed.frames[i].pixels, expected);
+  }
+  assert.equal(result.mixedLast.repetitionCount, 2);
+  assert.deepEqual(result.mixedLast.frames.map(f => f.duration), [100000, 100000]);
+  assert.equal(result.infinite.repetitionCount, Infinity);
+  assert.equal(result.infinite.frames.length, 2);
+  for (const frame of result.mixedLast.frames) assert.deepEqual(frame.pixels.slice(-4), lime);
+  for (const frame of result.infinite.frames) assert.deepEqual(frame.pixels.slice(0, 4), lime);
+});
+
+test('still merged WebP is reused from disk after reload with the static upload filename', async t => {
+  const chunk = mergedFixture.subarray(68, 92);
+  const header = Buffer.from('RIFF0000WEBP'); header.writeUInt32LE(chunk.length + 4, 4);
+  const still = Buffer.concat([header, chunk]);
+  const {load, entries} = mergedCache(t), first = load();
+  first.setMergeForTest(async () => new File([still], 'dccon.gif', {type: 'image/webp'}));
+  await first.getMergedImage(entries.slice(0, 2), () => {});
+  const reloaded = load(); reloaded.setMergeForTest(async () => {throw Error('must reuse static cache');});
+  const file = await reloaded.getMergedImage(entries.slice(0, 2), () => {});
+  assert.equal(file.name, 'dccon.gif');
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), still);
 });

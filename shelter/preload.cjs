@@ -12,7 +12,7 @@ if (config && process.isMainFrame && location.origin === config.origin) {
     abort: id => ipcRenderer.send('dccon:abort', id),
   });
   // Run before Discord's scripts: shelter observes React/Flux initialization.
-  webFrame.executeJavaScript(config.bundle).catch(error => {
+  if (config.hostMod !== 'shelter') webFrame.executeJavaScript(config.bundle).catch(error => {
     console.error('[discord-dccon shelter] bootstrap failed', error);
   });
 }

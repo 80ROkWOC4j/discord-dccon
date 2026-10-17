@@ -1,0 +1,48 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const {name, version, author, homepage, bugs, license} = require('../package.json');
+const root = path.resolve(__dirname, '..');
+async function main() {
+  const source = require('./build.cjs').buildEntry('userscript');
+  const metadata = `// ==UserScript==
+// @name ${name}
+// @namespace ${homepage}
+// @version ${version}
+// @author ${author}
+// @description Search and use DCCon images in Discord.
+// @description:ko Discord에서 디시콘을 검색하고 사용합니다.
+// @homepageURL ${homepage}
+// @supportURL ${bugs.url}
+// @source ${homepage}
+// @license ${license}
+// @updateURL ${homepage}/releases/latest/download/discord-dccon.user.js
+// @downloadURL ${homepage}/releases/latest/download/discord-dccon.user.js
+// @match https://discord.com/*
+// @match https://ptb.discord.com/*
+// @match https://canary.discord.com/*
+// @run-at document-end
+// @inject-into page
+// @noframes
+// @grant GM_xmlhttpRequest
+// @grant GM_getValue
+// @grant unsafeWindow
+// @connect dcinside.com
+// @connect ac.arca.live
+// @connect cdn.jsdelivr.net
+// @connect api.github.com
+// @connect huggingface.co
+// @connect hf.co
+// @connect xethub.hf.co
+// ==/UserScript==
+`;
+  const output = path.join(root, 'artifacts/userscript/discord-dccon.user.js');
+  await fs.mkdir(path.dirname(output), {recursive: true});
+  const reactLicense = await fs.readFile(path.join(root, 'node_modules/react/LICENSE'), 'utf8');
+  const hashLicense = await fs.readFile(path.join(root, 'node_modules/@noble/hashes/LICENSE'), 'utf8');
+  await fs.writeFile(output, metadata + `/* React / ReactDOM / Scheduler license:\n${reactLicense}\n\n@noble/hashes license:\n${hashLicense}\n*/\n` + source);
+  for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md'])
+    await fs.copyFile(path.join(root, file), path.join(path.dirname(output), file));
+  await fs.copyFile(path.join(root, 'node_modules/@noble/hashes/LICENSE'), path.join(path.dirname(output), 'noble-hashes-LICENSE.txt'));
+  console.log(output);
+}
+main().catch(error => {console.error(error); process.exitCode = 1;});

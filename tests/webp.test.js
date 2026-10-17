@@ -11,7 +11,7 @@ const executablePath = [process.env.WEBP_TEST_BROWSER, chromium.executablePath()
 test('animated WebP keeps its extension while still WebP uses the GIF filename without changing bytes', async () => {
   const context = {module: {exports: {}}, File, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') + '\nmodule.exports=webpFile;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).webpFile;
   for (const [chunk, flags, name] of [['VP8X', 2, 'dccon.webp'], ['VP8X', 18, 'dccon.webp'],
     ['VP8X', 16, 'dccon.gif'], ['VP8L', 2, 'dccon.gif'], ['VP8 ', 0, 'dccon.gif']]) {
     const bytes = Buffer.alloc(30);
@@ -27,7 +27,7 @@ test('animated WebP keeps its extension while still WebP uses the GIF filename w
 test('real WASM codecs preserve still pixels, GIF playback, and survive repeated conversions in a Worker', {skip: !executablePath}, async t => {
   const context = {module: {exports: {}}, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') + '\nmodule.exports=WebPCache;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports;
   const assets = {};
   for (const [kind, {name, hashes}] of Object.entries(codec.specs).filter(([, spec]) => spec.name)) {
@@ -110,8 +110,7 @@ test('codec downloads are pinned, cached offline, coalesced, and reject altered 
       const name = url.split('/').pop();
       return {arrayBuffer: async () => corrupt ? Buffer.from('tampered') : fs.readFileSync(path.join(__dirname, '../node_modules/@libwebp-wasm/gif2webp/es', name))};
     }}, Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  const source = fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') + '\nmodule.exports=WebPCache;';
-  vm.runInNewContext(source, context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports;
   await Promise.all([codec.runtime('gif', 0), codec.runtime('gif', 0)]);
   assert.equal(fetches, 2);
@@ -135,7 +134,7 @@ test('GIF fallback only handles codec conversion errors and stays in the cancell
   }
   const context = {module: {exports: {}}, Worker, URL, Blob, BdApi: {
     React: {Component: class {}}, Webpack: {getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') + '\nmodule.exports=WebPCache;', context);
+  context.module.exports = require('./helpers/core.cjs').loadCore(context).WebPCache;
   const codec = context.module.exports, gif = new TextEncoder().encode('GIF89a');
   codec.runtime = async kind => {requests.push(kind); return {source: '', wasm: new Uint8Array()};};
   const first = codec.convert(gif);
@@ -168,7 +167,7 @@ test('GIF fallback only handles codec conversion errors and stays in the cancell
 test('GIF fallback preserves composited pixels, disposal, timing and finite loops with real codecs', {skip: !executablePath}, async t => {
   const context = {module: {exports: {}}, BdApi: {React: {Component: class {}}, Webpack: {
     getByKeys: () => ({}), getModule: () => ({}), Filters: {byKeys: () => () => true}}}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') + '\nmodule.exports={WebPCache, isWebP};', context);
+  require('./helpers/core.cjs').loadCore(context);
   const {WebPCache: codec, isWebP} = context.module.exports, assets = {};
   for (const [kind, {name}] of Object.entries(codec.specs).filter(([, spec]) => spec.name)) {
     const directory = path.join(__dirname, '../node_modules/@libwebp-wasm', name, 'es');
@@ -218,13 +217,20 @@ test('GIF fallback preserves composited pixels, disposal, timing and finite loop
       const normalRequests = requests.slice();
       // Reuse both codec runtimes after the first fallback and after a successful GIF conversion.
       const repeated = await decode(await codec.convert(gif), 'image/webp');
-      return {before, after, repeated, normalRequests};
+      // Later frames below the canvas reproduce Firefox's "Error decoding frame".
+      const overflow = normal.slice();
+      overflow[122] = 2; // Third image descriptor: top offset, originally zero.
+      const overflowBefore = await decode(overflow, 'image/gif');
+      const overflowAfter = await decode(await codec.convert(overflow), 'image/webp');
+      return {before, after, repeated, normalRequests, overflowBefore, overflowAfter};
     } finally {codec.stop();}
   }, {methods: Object.fromEntries(['workerMain', 'convert', 'stop'].map(name => [name, codec[name].toString()])),
     isWebPSource: isWebP.toString(), assets});
   assert.deepEqual(result.after, result.before);
   assert.deepEqual(result.repeated, result.before);
   assert.deepEqual(result.normalRequests, ['gif']);
+  assert.deepEqual(result.overflowAfter, result.overflowBefore);
+  assert.ok(result.overflowAfter.frames.every(frame => frame.width === 3 && frame.height === 3));
   assert.equal(result.before.frames.length, 3);
   assert.deepEqual(result.before.frames.map(frame => frame.duration), [80000, 140000, 200000]);
 });

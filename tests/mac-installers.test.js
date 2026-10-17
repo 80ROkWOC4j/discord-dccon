@@ -18,7 +18,7 @@ test('unified Mac installer: three channels, both modes and offline removal',{sk
   const folder=path.join(packages,mode);
   if(mode==='betterdiscord') await put(path.join(folder,'discord-dccon.plugin.js'),'plugin fixture');
   else for(const name of ['main.cjs','bootstrap.js','preload.cjs','native.js','shared-storage.cjs']) await put(path.join(folder,'runtime',name),'runtime fixture');
-  if(mode==='standalone') await put(path.join(folder,'shelter-version.json'),'{"installLayout":"desktop_core","channels":["Stable","PTB","Canary"]}');
+  if(mode==='standalone') await put(path.join(folder,'shelter-version.json'),'{"installLayout":"desktop_core","channels":["Stable","PTB","Canary"],"hostMods":["shelter"]}');
   const asset='discord-dccon-'+mode+'.zip',archive=path.join(packages,asset);
   assert.equal(spawnSync('/usr/bin/ditto',['-c','-k',folder,archive]).status,0);
   checksums[asset]=hash(await fs.readFile(archive));
@@ -140,6 +140,29 @@ exec /bin/${command} "$@"
   assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),original);
   for(let i=0;i<protectedFiles.length;i++)assert.deepEqual(await fs.readFile(protectedFiles[i]),before[i]);
   await fs.rm(path.join(resources,'app.asar'));await fs.rename(path.join(resources,'_app.asar'),path.join(resources,'app.asar'));
+ }
+ // Official sheltupdate keeps its core source, preload, updater settings and app archive.
+ for(const channel of ['Stable','PTB','Canary']) {
+  const core=cores[channel],support=path.join(data,channel==='Stable'?'discord':'discord'+channel.toLowerCase());
+  const settings=path.join(support,'settings.json');
+  const host='// SHELTUPDATE_FRAMEWORK_ORIGINAL_PRELOAD SHELTER_BUNDLE_FETCH\n'+original;
+  await put(path.join(core,'index.js'),host);
+  await put(path.join(core,'preload.js'),'// SHELTER_BUNDLE_FETCH');
+  await put(path.join(core,'branches.json'),'[{"name":"shelter"}]');
+  await put(settings,'{"UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter","NEW_UPDATE_ENDPOINT":"https://inject.shelter.uwu.network/shelter/","keep":true}');
+  const files=[settings,path.join(core,'preload.js'),path.join(core,'branches.json')];
+  const before=await Promise.all(files.map(file=>fs.readFile(file)));
+  const args=['--channel',channel];
+  if(channel==='Stable')await checkFailures(core,args);
+  run(args);run(args);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(core,'discord-dccon/runtime/channel.json'))),{channel,hostMod:'shelter'});
+  assert.equal(await fs.readFile(path.join(core,'discord-dccon/original.js'),'utf8'),host);
+  assert.ok((await fs.readFile(path.join(core,'index.js'),'utf8')).endsWith(host));
+  if(channel==='Stable')await checkFailures(core,args,true);
+  env.DCCON_OFFLINE='1';run([...args,'--remove']);delete env.DCCON_OFFLINE;
+  assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),host);
+  for(let i=0;i<files.length;i++)assert.deepEqual(await fs.readFile(files[i]),before[i]);
+  await put(path.join(core,'index.js'),original);await put(settings,'{}');
  }
  const plugins=path.join(data,'BetterDiscord/plugins');await fs.mkdir(plugins,{recursive:true});
  await put(path.join(data,'BetterDiscord/data/betterdiscord.asar'),'runtime');

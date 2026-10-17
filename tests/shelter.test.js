@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const {captureWebpack, findWebpackRequire} = require('../shelter/webpack');
-const {createAdapter} = require('../shelter/adapter');
+const {createShelterPlatform} = require('../src/platform/shelter.ts');
 const {createFiles, resolveFile, allowedDownload, hash, prepareDataRoot, channelOptions} = require('../shelter/native');
 
 test('shelter module capture survives webpack push replacement and observes reassigned exports', () => {
@@ -79,9 +79,8 @@ test('upload lookup skips CSS and initializes only matching lazy factories', () 
   }]);
   load(1);
   const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
-  const {BdApi} = createAdapter(shelter, {initialData: {}}, webpack);
-  const upload = BdApi.Webpack.getModule(value => typeof value === 'function' &&
-    typeof value.prototype?.trackUploadFinished === 'function' && typeof value.prototype?.upload === 'function');
+  const {platform} = createShelterPlatform(shelter, {initialData: {}}, webpack);
+  const upload = platform.discord.uploadModule();
   assert.equal(typeof upload, 'function');
   assert.equal(cache[4], undefined);
 });
@@ -109,11 +108,11 @@ test('shelter imports its legacy snapshot through common JSON and never updates 
   const shelter = {plugin: {store, flushStore() {}}, flux: {storesFlat: {}}};
   const calls = [];
   const native = {config: async (method, args) => {calls.push({method,args}); return {version:2,settings:args[0]};}};
-  const {BdApi} = createAdapter(shelter, native, {});
-  const imported = await BdApi.Config.open(), packs = imported.settings.dccons;
+  const {platform} = createShelterPlatform(shelter, native, {});
+  const imported = await platform.config.open(), packs = imported.settings.dccons;
   packs[0].info.title = 'changed';
-  assert.equal(BdApi.Data.load('discord-dccon', 'dccons')[0].info.title, 'original');
-  await BdApi.Config.save('dccons', packs, []);
+  assert.equal(platform.data.load('dccons')[0].info.title, 'original');
+  await platform.config.save('dccons', packs, []);
   assert.equal(calls[1].method, 'save');
   assert.equal(store.dcconData.dccons[0].info.title, 'original');
 });
@@ -137,14 +136,11 @@ test('image sends use shelter Discord REST, never an ambiguous HTTP export', asy
     getModule: filter => [wrong, CloudUpload].find(value => filter(value)),
     getModuleBySource: filter => [wrong, CloudUpload].find(value => filter(value))};
   const shelter = {http: {_raw: rest}, React: {Component: class {}}, plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
-  const adapter = createAdapter(shelter, {initialData: {}}, webpack);
-  const module = {exports: {}};
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
-  vm.runInNewContext(source + '\nmodule.exports={sendImagesDirectly};', {
-    module, BdApi: adapter.BdApi, structuredClone, setTimeout, clearTimeout,
+  const adapter = createShelterPlatform(shelter, {initialData: {}}, webpack);
+  const api = require('./helpers/core.cjs').loadCore({ DCConPlatform: adapter.platform, structuredClone, setTimeout, clearTimeout,
   });
   const imageAttempt = {};
-  await module.exports.sendImagesDirectly([{name: 'dccon.png', size: 3}], 'channel-test', imageAttempt);
+  await api.sendImagesDirectly([{name: 'dccon.png', size: 3}], 'channel-test', imageAttempt);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/channels/channel-test/messages');
   assert.equal(calls[0].body.content, '');
@@ -156,14 +152,14 @@ test('adapter disposal aborts old downloads without reusing IDs after restart', 
   const requests = [], aborted = [];
   const shelter = {plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}};
   const native = {initialData: {}, abort: id => aborted.push(id), fetch: id => new Promise(resolve => requests.push({id, resolve}))};
-  const first = createAdapter(shelter, native, {});
-  const oldRequest = first.BdApi.Net.fetch('https://dcinside.com/old');
+  const first = createShelterPlatform(shelter, native, {});
+  const oldRequest = first.platform.net.fetch('https://dcinside.com/old');
   first.dispose();
-  const second = createAdapter(shelter, native, {});
-  const newRequest = second.BdApi.Net.fetch('https://dcinside.com/new');
+  const second = createShelterPlatform(shelter, native, {});
+  const newRequest = second.platform.net.fetch('https://dcinside.com/new');
   assert.notEqual(requests[0].id, requests[1].id);
   assert.deepEqual(aborted, [requests[0].id]);
-  await assert.rejects(first.BdApi.Net.fetch('https://dcinside.com/stopped'), {name: 'AbortError'});
+  await assert.rejects(first.platform.net.fetch('https://dcinside.com/stopped'), {name: 'AbortError'});
   for (const request of requests) request.resolve({status: 200, headers: [], bytes: []});
   await Promise.all([oldRequest, newRequest]);
   second.dispose();
@@ -199,59 +195,59 @@ test('native bridge confines writes and reuses legacy binary cache read-only', a
   assert.throws(() => allowedDownload('https://discord.com/api/v9/users/@me'));
   assert.throws(() => allowedDownload('https://dcinside.com.evil.test/'));
   assert.equal(allowedDownload('https://dcimg5.dcinside.com/image'), 'https://dcimg5.dcinside.com/image');
+  assert.equal(allowedDownload('https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases'), 'https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases');
+  assert.throws(() => allowedDownload('https://api.github.com.evil.test/'));
   assert.equal(hash(['abc'], 'hex'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
 });
 
-test('generated shelter bootstrap and DCCon source parse', async () => {
-  const source = await fs.readFile(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8');
-  assert.doesNotThrow(() => new vm.Script(source));
-  const plugin = await fs.readFile(path.join(__dirname, '../shelter/plugin.js'), 'utf8');
-  assert.doesNotThrow(() => new vm.Script(plugin));
+test('generated shelter and BetterDiscord entries parse', () => {
+  const {buildBetterDiscord, buildShelterPlugin} = require('../scripts/build.cjs');
+  assert.doesNotThrow(() => new vm.Script(buildBetterDiscord()));
+  assert.doesNotThrow(() => new vm.Script(buildShelterPlugin('test')));
 });
 
-test('plugin starts after first-store retry without PoC status APIs and cleans up', async () => {
-  const source = await fs.readFile(path.join(__dirname, '../shelter/plugin.js'), 'utf8');
+test('plugin starts after first-store retry and cleans up through the actual entrypoint', async () => {
+  const {JSDOM} = require('jsdom');
+  const dom = new JSDOM('<!doctype html><body></body>');
   const timers = [], events = [];
-  let firstStore = true, lifecycle;
-  const context = vm.createContext({
-    console, dcconVersion: '3.0.0', DCConNative: {},
-    dcconWebpack: {getByKeys: () => ({})},
-    setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {},
-    createAdapter: () => ({BdApi: {mount: () => events.push('mount'), unmount: () => events.push('unmount')}, requireNative() {}, dispose: () => events.push('dispose')}),
-    dcconSource: 'module.exports=class {start(){BdApi.mount();} stop(){BdApi.unmount();}};',
-    shelter: {React: {createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
-      http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
-      plugin: {id: 'discord-dccon', flushStore() {
-        if (firstStore) {firstStore = false; throw Error('not a shelter storage proxy');}
-      }},
-      plugins: {stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = vm.runInContext(source, context); lifecycle.onLoad();}},
-      ui: {showToast: message => assert.fail(JSON.stringify(message))}},
-  });
-  lifecycle = vm.runInContext(source, context);
-  lifecycle.onLoad();
-  assert.equal(timers.length, 1);
-  timers.shift()();
-  assert.deepEqual(events, ['mount']);
-  lifecycle.onUnload();
-  assert.deepEqual(events, ['mount', 'unmount', 'dispose']);
-  assert.equal(context.DCConShelterStatus, undefined);
+  let firstStore = true, lifecycle, started;
+  const host = {React: {Component: class {}, createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
+    util: {getFiber() {}}, flux: {storesFlat: {}}, http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
+    plugin: {id: 'discord-dccon', store: {}, flushStore() {
+      if (firstStore) {firstStore = false; throw Error('not a shelter storage proxy');}
+    }},
+    plugins: {stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = create(); started = lifecycle.onLoad();}},
+    ui: {injectCss() {events.push('mount'); return () => events.push('unmount');}, showToast: message => assert.fail(message.content)}};
+  const native = {config: async () => ({version: 2, settings: {dccons: [], recent: [], embeddingEnabled: false}})};
+  const webpack = {getByKeys: () => ({}), isReady: () => true};
+  const context = {module: {exports: {}}, document: dom.window.document, window: dom.window, navigator: dom.window.navigator,
+    MutationObserver: dom.window.MutationObserver, crypto: globalThis.crypto, structuredClone, queueMicrotask, console,
+    setTimeout: callback => {timers.push(callback); return timers.length;}, clearTimeout() {}};
+  vm.runInNewContext(require('../scripts/build.cjs').buildEntry('shelter', {format: 'cjs'}), context);
+  const create = () => context.module.exports.createShelterPlugin(host, native, webpack, 'test');
+  try {
+    lifecycle = create(); await lifecycle.onLoad();
+    assert.equal(timers.length, 1); timers.shift()(); await started;
+    assert.deepEqual(events, ['mount']);
+    lifecycle.onUnload(); assert.deepEqual(events, ['mount', 'unmount']);
+  } finally {dom.window.close();}
 });
 
-for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
-  const events = new Map();
+for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Stable', 'Canary']) for (const alreadyReady of [false, true]) for (const hostMod of [undefined, 'vencord', 'shelter']) test(`injector connects ${channel} on ${platform} and restricts IPC and CSP (already ready: ${alreadyReady}, host: ${hostMod})`, async () => {
+  const events = new Map(), handlers = new Map();
   const existingHeaders = () => {};
   let ready, onHeaders = existingHeaders;
-  const electron = {app: {isReady: () => alreadyReady, getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle() {}},
+  const electron = {app: {isReady: () => alreadyReady, getPath: () => os.tmpdir(), on: (_, fn) => {ready = fn;}}, ipcMain: {on: (key, fn) => events.set(key, fn), handle(key, fn) {handlers.set(key, fn);}},
     session: {defaultSession: {webRequest: {onHeadersReceived: fn => {onHeaders = fn;}}}},
     BrowserWindow: class {constructor(options) {this.options = options; this.webContents = {id: 7, once() {}};}}, net: {}};
   const cachedModule = {};
   Object.defineProperty(cachedModule, 'exports', {configurable: true, get: () => electron});
-  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel, hostMod}) : '{}'};
+  const fakeFs = {readFileSync: file => file.endsWith('channel.json') ? JSON.stringify({channel, hostMod}) : 'throw Error("addon failed")'};
   function load(name) {
     if (name === 'electron') return electron;
     if (name === 'node:fs') return fakeFs;
     if (name === 'node:process') return {platform};
-    if (name === './shared-storage.cjs') return require('../scripts/shared-storage.cjs');
+    if (name === './shared-storage.cjs') return require('../src/storage/node.ts');
     if (name === './native') return {allowedDownload, channelOptions, prepareDataRoot: (base, selected) => {
       assert.equal(selected, channel);
       assert.equal(base, platform === 'linux' ? path.join(os.tmpdir(), '.config') : os.tmpdir());
@@ -280,8 +276,17 @@ for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Sta
     assert.throws(() => events.get('dccon:abort')({senderFrame: otherFrame, sender: {mainFrame: otherFrame}}, 1), /Untrusted/);
   }
   assert.equal(events.has('dccon:status'), false);
-  if (hostMod === 'vencord') {
-    assert.equal(onHeaders, existingHeaders, 'Vencord must retain its CSP handler');
+  if (hostMod === 'shelter') {
+    const wrapper = electron.ipcMain.handle;
+    electron.ipcMain.handle('SHELTER_BUNDLE_FETCH', async event => {assert.equal(event, 'event'); return 'globalThis.hostLoaded = true;';});
+    assert.notEqual(electron.ipcMain.handle, wrapper);
+    const errors = [], context = {console: {error: (...args) => errors.push(args)}};
+    vm.runInNewContext(await handlers.get('SHELTER_BUNDLE_FETCH')('event'), context);
+    assert.equal(context.hostLoaded, true, 'Addon bootstrap failures must not prevent Shelter from loading');
+    assert.equal(errors.length, 1);
+  }
+  if (hostMod) {
+    assert.equal(onHeaders, existingHeaders, 'Host mod must retain its CSP handler');
     assert.equal(ready, undefined);
     return;
   }
@@ -302,10 +307,10 @@ for (const platform of ['darwin', 'win32', 'linux']) for (const channel of ['Sta
 
 test('preload injects only the configured channel main frame and always loads original preload', async () => {
   const source = await fs.readFile(path.join(__dirname, '../shelter/preload.cjs'), 'utf8');
-  for (const channel of ['Stable', 'Canary']) for (const allowed of [true, false]) {
+  for (const channel of ['Stable', 'Canary']) for (const allowed of [true, false]) for (const hostMod of [undefined, 'shelter']) {
     const origin = channelOptions(channel).origin, calls = [];
     let bridge, reads = 0;
-    const electron = {ipcRenderer: {sendSync: () => ({origin, originalPreload: 'original', bundle: 'bundle'})},
+    const electron = {ipcRenderer: {sendSync: () => ({origin, originalPreload: 'original', bundle: 'bundle', hostMod})},
       clipboard: {readText: () => {reads++; return 'clipboard-url';}},
       contextBridge: {exposeInMainWorld: (_, value) => {bridge = value; calls.push('bridge');}},
       webFrame: {executeJavaScript: () => {calls.push('injected'); return Promise.resolve();}}};
@@ -315,11 +320,11 @@ test('preload injects only the configured channel main frame and always loads or
         if (name === './native') return {createFiles() {}, hash() {}};
         assert.equal(name, 'original'); calls.push('original');
       }});
-    assert.deepEqual(calls, allowed ? ['bridge', 'injected', 'original'] : ['original']);
+    assert.deepEqual(calls, allowed ? (hostMod === 'shelter' ? ['bridge', 'original'] : ['bridge', 'injected', 'original']) : ['original']);
     assert.equal(reads, 0);
     if (allowed) {
-      const {requireNative} = createAdapter({plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}}, {...bridge, initialData: {}}, {});
-      assert.equal(requireNative('electron').clipboard.readText(), 'clipboard-url');
+      const {platform} = createShelterPlatform({plugin: {store: {}, flushStore() {}}, flux: {storesFlat: {}}}, {...bridge, initialData: {}}, {});
+      assert.equal(platform.readClipboardText(), 'clipboard-url');
       assert.equal(reads, 1);
     } else assert.equal(bridge, undefined);
   }
@@ -351,29 +356,29 @@ test('late shelter plugin obtains existing webpack without wrapping its factorie
   assert.equal(chunks.push, push);
 });
 
-test('Vencord thumbnails use direct bytes and Blob URLs without CSP settings changes', async () => {
+for (const hostMod of ['vencord', 'shelter']) test(`${hostMod} thumbnails use direct bytes and Blob URLs without CSP settings changes`, async () => {
   const calls = [];
-  const native = {hostMod: 'vencord', fetch: async (id, url, options) => {
+  const native = {hostMod, fetch: async (id, url, options) => {
     calls.push({url,options});return {status:200,headers:[['content-type','image/gif']],bytes:new Uint8Array([71,73,70])};
   }};
-  const adapter = createAdapter({plugin:{store:{}},ReactDOM:{}},native,{});
-  const blob = await adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123');
+  const adapter = createShelterPlatform({plugin:{store:{}},ReactDOM:{}},native,{});
+  const blob = await adapter.platform.net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123');
   assert.equal(calls[0].url,'https://dcimg5.dcinside.com/dccon.php?no=abc123');
   assert.equal(blob.type,'image/gif');
   assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())],[71,73,70]);
   const controller=new AbortController();controller.abort();
-  await assert.rejects(adapter.BdApi.Net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123',controller.signal),{name:'AbortError'});
+  await assert.rejects(adapter.platform.net.resolveImage('https://dccon-proxy.minibox.workers.dev/?no=abc123',controller.signal),{name:'AbortError'});
   assert.equal(calls.length,1);
   adapter.dispose();
 });
 
 test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native rendering on other hosts', async () => {
-  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
   const pending=[],revoked=[];
   const context={module:{exports:{}},AbortController,URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
-    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
-      Net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
-  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+    platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      net:{resolveImage:(src,signal)=>new Promise(resolve=>pending.push({signal,resolve}))}}};
+  context.platform.discord = {classes: {}};
+  context.module.exports = require('./helpers/core.cjs').importCore(context).createMediaUI(context.platform, {}).DCConImage;
   const Image=context.module.exports,image=new Image({src:'first',loading:'lazy'});
   image.componentDidMount();pending[0].resolve('first');await Promise.resolve();
   assert.equal(image.render().props.src,'blob:first');assert.equal(image.render().props.loading,'eager');
@@ -381,13 +386,12 @@ test('Blob thumbnails revoke old URLs, cancel stale downloads and retain native 
   assert.equal(pending[0].signal.aborted,true);assert.deepEqual(revoked,['blob:first']);
   image.componentWillUnmount();pending[1].resolve('second');await Promise.resolve();
   assert.equal(image.state.source,undefined);assert.equal(pending[1].signal.aborted,true);
-  delete context.BdApi.Net.resolveImage;
+  delete context.platform.net.resolveImage;
   const direct=new Image({src:'original',loading:'lazy'});direct.componentDidMount();
   assert.equal(direct.render().props.src,'original');assert.equal(direct.render().props.loading,'lazy');
 });
 
 test('Blob thumbnails wait for intersection and ignore stale visibility callbacks', async () => {
-  const source = await fs.readFile(path.join(__dirname,'../discord-dccon.plugin.js'),'utf8');
   const downloads=[], observers=[], revoked=[];
   const context={module:{exports:{}},AbortController,
     IntersectionObserver:class {
@@ -397,10 +401,11 @@ test('Blob thumbnails wait for intersection and ignore stale visibility callback
       notify(isIntersecting){this.callback([{target:this.target,isIntersecting}]);}
     },
     URL:{createObjectURL:value=>'blob:'+value,revokeObjectURL:value=>revoked.push(value)},
-    BdApi:{React:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
-      Net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
+    platform:{react:{Component:class{constructor(props){this.props=props;}setState(value){Object.assign(this.state,value);}},createElement:(type,props)=>({type,props})},
+      net:{resolveImage:(src,signal)=>new Promise(resolve=>downloads.push({src,signal,resolve}))}},
   };
-  vm.runInNewContext(source.slice(source.indexOf('class DCConImage'),source.indexOf('const ManduIcon'))+'\nmodule.exports=DCConImage;',context);
+  context.platform.discord = {classes: {}};
+  context.module.exports = require('./helpers/core.cjs').importCore(context).createMediaUI(context.platform, {}).DCConImage;
   const Image=context.module.exports, scrollRoot={};
   const images=Array.from({length:200},(_,i)=>{
     const image=new Image({src:'image-'+i,loading:'lazy'});
@@ -425,4 +430,16 @@ test('Blob thumbnails wait for intersection and ignore stale visibility callback
   images[199].componentWillUnmount();observers[199].notify(true);
   assert.equal(downloads.length,9,'Unmounted offscreen image must not download');
   for(const image of images)image.componentWillUnmount();
+});
+
+test('managed Shelter plugin removes its registration after native bridge removal, retaining host-owned data', async () => {
+  const removed = [], pending = [], store = {dcconData: {favorites: ['keep']}};
+  const shelter = {plugin: {id: 'discord-dccon', store}, plugins: {removePlugin: id => removed.push(id)}};
+  const source = require('../scripts/build.cjs').buildShelterPlugin('test');
+  const lifecycle = vm.runInNewContext(source, {shelter, queueMicrotask: fn => pending.push(fn)});
+  await lifecycle.onLoad();
+  assert.deepEqual(removed, []);
+  pending.shift()();
+  assert.deepEqual(removed, ['discord-dccon']);
+  assert.deepEqual(store.dcconData.favorites, ['keep']);
 });

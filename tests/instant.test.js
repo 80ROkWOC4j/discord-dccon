@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 
-function harness({uploadFails = false, postFails = false, missing = false, cleanupFails = false, noAcknowledgement = false, postRejects = false, htmlResponse = false, functionDecoy = false, onUpload, splitImage, mergeImage, cacheDirectory, fetchFails = false, callbackFs = false, cacheWriteFails = false, downloadBytes = [1, 2, 3]} = {}) {
+function harness({attachFiles, uploadFails = false, postFails = false, missing = false, cleanupFails = false, noAcknowledgement = false, postRejects = false, htmlResponse = false, functionDecoy = false, onUpload, splitImage, mergeImage, cacheDirectory, fetchFails = false, callbackFs = false, cacheWriteFails = false, downloadBytes = [1, 2, 3]} = {}) {
   const calls = {staged: 0, posts: [], closes: 0, errors: [], uploads: [], fetches: 0};
   const data = {sendMode: "image", draft: '작성 중인 글', attachments: ['existing'], reply: 'reply-id'};
   class Upload extends EventEmitter {
@@ -54,6 +54,7 @@ function harness({uploadFails = false, postFails = false, missing = false, clean
   ]));
   const pluginRequire = name => name === 'fs' && callbackFs ? polyfillFs : require(name);
   const context = {require: pluginRequire, URL, module: {exports: {}}, Blob, File, structuredClone, setTimeout, clearTimeout, BdApi: {
+    Composer: attachFiles ? {attachFiles} : undefined,
     Plugins: {folder: cacheDirectory, cacheFolder: cacheDirectory && path.join(cacheDirectory, "cache")}, React: {Component: class {}},
     Data: {load: (_, key) => data[key], save: (_, key, value) => { data[key] = value; }},
     Webpack: {getStore: () => ({getUploads: getDraft}), getModule: filter => modules.find(filter), getByKeys: () => ({}),
@@ -61,11 +62,10 @@ function harness({uploadFails = false, postFails = false, missing = false, clean
     Net: {fetch: async () => { calls.fetches++; if (fetchFails) throw new Error('offline'); return {arrayBuffer: async () => new Uint8Array(downloadBytes).buffer}; }},
     UI: {showToast: text => calls.errors.push(text)}, Logger: {error() {}},
   }};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../discord-dccon.plugin.js'), 'utf8') +
-    // Conversion itself is exercised with real WASM in webp.test.js; send tests use byte fixtures.
-    '\nWebPCache.convert = async bytes => bytes; module.exports = {WebPCache, sendDCConMessage, inspectInstantSend, events: PluginEvents, activeQueue, removeBuffered, getDCConImage, setChannel: id => {currentChannelId = id;}};', context);
-  if (splitImage) { context.splitImageForTest = splitImage; vm.runInNewContext("splitImageIntoNine = splitImageForTest;", context); }
-  if (mergeImage) { context.mergeImageForTest = mergeImage; vm.runInNewContext("mergeAnimatedImages = mergeImageForTest;", context); }
+  require('./helpers/core.cjs').loadCore(context);
+  context.module.exports.WebPCache.convert = async bytes => bytes;
+  if (splitImage) context.module.exports.setSplitForTest(splitImage);
+  if (mergeImage) context.module.exports.setMergeForTest(mergeImage);
   const api = context.module.exports;
   api.setChannel('test-channel');
   api.events.subscribe('DCCON_CLOSE', () => calls.closes++);
@@ -509,4 +509,43 @@ test('clearing the private buffer keeps subsequent sends image-only', async () =
   await api.sendDCConMessage(con);
   assert.equal(calls.posts[0].body.attachments.length, 1);
   assert.equal(calls.posts[0].body.content, '');
+});
+
+
+test('attachment host uses the shared queue without uploading or posting messages', async () => {
+  const attached = [];
+  const {api, calls} = harness({attachFiles: (files, channelId) => attached.push({files, channelId})});
+  await api.sendDCConMessage(con, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage({...con, path: 'second'}), true);
+  assert.equal(attached.length, 1);
+  assert.equal(attached[0].files.length, 2);
+  assert.equal(attached[0].channelId, 'test-channel');
+  assert.equal(calls.uploads.length, 0);
+  assert.equal(calls.posts.length, 0);
+  assert.equal(api.activeQueue('test-channel').length, 0);
+});
+
+test('attachment failure preserves the queue and never falls back to direct sending', async () => {
+  const {api, calls} = harness({attachFiles: () => {throw Error('Channel changed');}});
+  await api.sendDCConMessage(con, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage(null), false);
+  assert.equal(api.activeQueue('test-channel').length, 1);
+  assert.equal(calls.uploads.length, 0);
+  assert.equal(calls.posts.length, 0);
+});
+
+test('merged images use the attachment host instead of direct sending', async () => {
+  const attached = [];
+  const {api, calls} = harness({
+    attachFiles: files => attached.push(files),
+    mergeImage: async () => new File(['merged'], 'merged.webp', {type: 'image/webp'}),
+  });
+  await api.sendDCConMessage(con, {keepOpen: true});
+  await api.sendDCConMessage({...con, path: 'second'}, {keepOpen: true});
+  assert.equal(await api.sendDCConMessage(null, {mergeImages: true}), true);
+  assert.equal(attached.length, 1);
+  assert.equal(attached[0].length, 1);
+  assert.equal(attached[0][0].name, 'merged.webp');
+  assert.equal(calls.uploads.length, 0);
+  assert.equal(calls.posts.length, 0);
 });

@@ -12,7 +12,7 @@ try {
   hostMod = config.hostMod;
 }
 catch (error) {if (error.code !== 'ENOENT') throw error;}
-if (hostMod !== undefined && hostMod !== 'vencord') throw Error('Unsupported host mod');
+if (hostMod !== undefined && !['vencord', 'shelter'].includes(hostMod)) throw Error('Unsupported host mod');
 const {origin} = channelOptions(channel);
 const dataRoot = prepareDataRoot(require('node:process').platform === 'linux'
   ? path.join(app.getPath('home'), '.config') : app.getPath('appData'), channel);
@@ -20,6 +20,17 @@ const cacheRoot = path.join(dataRoot, 'cache');
 const configStore = createConfigStore({root: dataRoot, vectorSpec: 'q8-image560-video6x280-v2'});
 const requests = new Map(), preloads = new Map();
 const bundle = fs.readFileSync(path.join(__dirname, 'bootstrap.js'), 'utf8');
+// sheltupdate supplies its injector manifest before evaluating this bundle.
+// Prepend our plugin registration, leaving its Shelter build and manifest intact.
+if (hostMod === 'shelter') {
+  const handle = ipcMain.handle;
+  ipcMain.handle = function(name, listener) {
+    if (name !== 'SHELTER_BUNDLE_FETCH') return handle.call(this, name, listener);
+    ipcMain.handle = handle;
+    return handle.call(this, name, async (...args) =>
+      `try {\n${bundle}\n} catch (error) {console.error('[discord-dccon] Shelter integration failed', error);}\n` + await listener(...args));
+  };
+}
 function trusted(event) {
   const url = new URL(event.senderFrame?.url || 'about:blank');
   if (event.senderFrame !== event.sender.mainFrame || url.origin !== origin) throw Error('Untrusted IPC origin');
@@ -90,9 +101,9 @@ function installHeaders() {
   });
 }
 // The macOS desktop-core entry is loaded after Electron's ready event.
-// Vencord owns this single-listener Electron hook; registering here would
+// Host mods own this single-listener Electron hook; registering here would
 // replace its CSP. The adapter downloads thumbnail bytes and uses Blob URLs.
-if (hostMod !== 'vencord') {
+if (!hostMod) {
   if (app.isReady()) installHeaders();
   else app.on('ready', installHeaders);
 }
