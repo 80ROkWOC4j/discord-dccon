@@ -1,10 +1,84 @@
 #!/bin/bash
-# Online macOS installer. Uses only tools shipped with macOS.
+# Online macOS / Linux installer (native Discord packages only).
 # curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh | bash
 set -euo pipefail
 fail() { echo "$*" >&2; exit 1; }
-hash() { shasum -a 256 "$1" | awk '{print $1}'; }
+is_linux() { [[ ${installer_os:-$(uname -s)} == Linux ]]; }
+hash() {
+  if is_linux; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
+}
+unique_id() {
+  if is_linux; then cat /proc/sys/kernel/random/uuid; else uuidgen; fi
+}
+app_data_directory() {
+  if is_linux; then printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}";
+  else printf '%s\n' "$HOME/Library/Application Support"; fi
+}
+app_resources() {
+  if is_linux; then printf '%s/resources\n' "$1";
+  else printf '%s/Contents/Resources\n' "$1"; fi
+}
+discord_version() {
+  if is_linux; then json_value "$1/build_info.json" version;
+  else /usr/bin/plutil -extract version raw -o - "$1/build_info.json"; fi
+}
+discord_running() {
+  local channel=$1 name
+  local names=()
+  case "$channel" in
+    Stable) names=(Discord discord) ;;
+    PTB) names=('Discord PTB' DiscordPTB discordptb discord-ptb) ;;
+    Canary) names=('Discord Canary' DiscordCanary discordcanary discord-canary) ;;
+  esac
+  for name in "${names[@]}"; do
+    if pgrep -x "$name" >/dev/null; then return 0; fi
+  done
+  return 1
+}
+linux_native_path() {
+  case "$1/" in
+    /app/*|*/.var/app/*|*/flatpak/*|*/snap/*) fail 'Flatpak and Snap Discord installations are not supported. Install a native Discord package.' ;;
+  esac
+}
+find_linux_app() {
+  local data=$1 client=$2 binary=$3 candidate executable
+  # The native updater's symlink selects the active host, even with old versions present.
+  if [[ -e "$data/$binary" ]]; then
+    executable=$(readlink -f "$data/$binary")
+    candidate=$(dirname "$executable")
+    if [[ -f "$candidate/resources/build_info.json" ]]; then printf '%s\n' "$candidate"; return; fi
+  fi
+  for executable in "$client" "${client/discord/discord-}"; do
+    candidate=$(command -v "$executable" || true)
+    [[ -n $candidate ]] || continue
+    candidate=$(dirname "$(readlink -f "$candidate")")
+    if [[ -f "$candidate/resources/build_info.json" ]]; then printf '%s\n' "$candidate"; return; fi
+  done
+  for candidate in "/opt/$client" "/opt/$binary" "/usr/share/$client" "/usr/lib/$client"; do
+    if [[ -f "$candidate/resources/build_info.json" ]]; then printf '%s\n' "$candidate"; return; fi
+  done
+  fail 'Native Discord not found. Launch it once, then quit it. For a custom installation, use --discord-root <directory containing resources>. Flatpak and Snap are not supported.'
+}
 json_value() {
+  if is_linux; then
+    python3 - "$@" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8-sig') as source:
+    value = json.load(source)
+for key in sys.argv[2:]:
+    if isinstance(value, dict):
+        value = value.get(key)
+    elif isinstance(value, list) and key.isdigit() and int(key) < len(value):
+        value = value[int(key)]
+    else:
+        value = None
+    if value is None:
+        break
+if value is not None:
+    print(json.dumps(value, ensure_ascii=False, separators=(',', ':')) if isinstance(value, (dict, list, bool)) else value)
+PY
+    return
+  fi
   /usr/bin/osascript -l JavaScript -e '
 ObjC.import("Foundation");
 function run(args) {
@@ -23,7 +97,11 @@ is_vencord() {
   local resources=$1 patcher=$2 needle
   [[ -e "$resources/_app.asar" ]] || return 1
   [[ -f "$resources/_app.asar" && -f "$resources/app.asar" && -f "$patcher" ]] || fail 'Incomplete Vencord installation. Repair Vencord first.'
-  needle=$(/usr/bin/osascript -l JavaScript -e 'function run(args) { return "require(" + JSON.stringify(args[0]).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026") + ")"; }' "$patcher")
+  if is_linux; then
+    needle=$(python3 -c 'import json,sys; print("require(" + json.dumps(sys.argv[1], ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026") + ")")' "$patcher")
+  else
+    needle=$(/usr/bin/osascript -l JavaScript -e 'function run(args) { return "require(" + JSON.stringify(args[0]).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026") + ")"; }' "$patcher")
+  fi
   /usr/bin/grep -aFq "$needle" "$resources/app.asar" || fail 'Unknown Vencord app loader.'
 }
 core_entry_state() {
@@ -56,8 +134,8 @@ is_shelter_core() {
 detect_installation() {
   local app=$1 data=$2 bd=$3 version resources entry file installed state=Standalone found=false vencord=false shelter=false shelter_core=false
   [[ -d "$app" ]] || fail "Discord not found: $app"
-  resources="$app/Contents/Resources"
-  version=$(/usr/bin/plutil -extract version raw -o - "$resources/build_info.json")
+  resources=$(app_resources "$app")
+  version=$(discord_version "$resources")
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Unexpected Discord version.'
   if [[ -f "$data/settings.json" ]]; then
     for key in UPDATE_ENDPOINT NEW_UPDATE_ENDPOINT; do
@@ -120,12 +198,12 @@ detect_installation() {
 }
 
 install_betterdiscord() {
-  plugins="$HOME/Library/Application Support/BetterDiscord/plugins"
+  plugins="$bd/plugins"
   [[ -d "$plugins" ]] || { echo 'BetterDiscord plugin directory not found.' >&2; exit 1; }
   target="$plugins/discord-dccon.plugin.js"
   if $remove; then
     [[ -f "$target" ]] || { echo 'discord-dccon plugin is not installed.' >&2; exit 1; }
-    mv "$target" "$target.removed-$(uuidgen)"
+    mv "$target" "$target.removed-$(unique_id)"
     echo 'discord-dccon plugin removed. BetterDiscord, settings and cache were preserved.'
     return
   fi
@@ -133,7 +211,7 @@ install_betterdiscord() {
   [[ -f "$source" ]] || { echo 'Plugin file is missing from this package.' >&2; exit 1; }
   if [[ -f "$target" ]]; then
     if cmp -s "$source" "$target"; then echo 'This discord-dccon version is already installed.'; return; fi
-    cp "$target" "$target.backup-$(uuidgen)"
+    cp "$target" "$target.backup-$(unique_id)"
   fi
   cp "$source" "$target.installing"
   mv "$target.installing" "$target"
@@ -142,7 +220,7 @@ install_betterdiscord() {
 }
 
 remove_core_addon() {
-  local core=$1 installed="$1/discord-dccon" archive="$1/discord-dccon-removed-$(uuidgen)"
+  local core=$1 installed="$1/discord-dccon" archive="$1/discord-dccon-removed-$(unique_id)"
   purge_check_path "$archive" "$core"
   [[ ! -e $core/index.js.restoring && ! -L $core/index.js.restoring ]] || fail "Restore temporary file already exists: $core/index.js.restoring"
   if ! cp "$installed/original.js" "$core/index.js.restoring"; then
@@ -159,20 +237,23 @@ remove_core_addon() {
 }
 
 install_standalone() {
-  local host_mod=${1:-} app_before= app_binary vencord_patcher
+  local host_mod=${1:-} app_before= app_binary vencord_patcher resources
+  resources=$(app_resources "$app")
   if [[ $host_mod == vencord ]]; then
-    vencord_patcher="$HOME/Library/Application Support/Vencord/dist/patcher.js"
-    is_vencord "$app/Contents/Resources" "$vencord_patcher" || fail 'Expected the standard Vencord installation.'
-    app_binary=$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")
-    [[ -n $app_binary && $app_binary != */* ]] || fail 'Unexpected Discord executable name.'
+    vencord_patcher="$(dirname "$bd")/Vencord/dist/patcher.js"
+    is_vencord "$resources" "$vencord_patcher" || fail 'Expected the standard Vencord installation.'
+    if ! is_linux; then
+      app_binary=$(/usr/bin/plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")
+      [[ -n $app_binary && $app_binary != */* ]] || fail 'Unexpected Discord executable name.'
+    fi
     # Vencord already changed the signed bundle. Preserve its exact bytes.
-    app_before=$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")
+    app_before=$(app_fingerprint)
   elif [[ -z $host_mod || $host_mod == shelter ]]; then
-    codesign --verify --deep --strict "$app"
+    if ! is_linux; then codesign --verify --deep --strict "$app"; fi
   else
     fail 'Unsupported standalone host mod.'
   fi
-  version=$(/usr/bin/plutil -extract version raw -o - "$app/Contents/Resources/build_info.json")
+  version=$(discord_version "$resources")
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Unexpected Discord version.'
   shopt -s nullglob
   cores=("$data/app-$version/modules/"discord_desktop_core-*/discord_desktop_core/index.js
@@ -182,6 +263,7 @@ install_standalone() {
   [[ ${#existing[@]} == 1 ]] || fail 'Launch Discord once to install its core module, then quit it. Expected exactly one core module.'
   core=$(dirname "${existing[0]}")
   [[ -f "$core/core.asar" && -f "$core/index.js" ]] || fail 'Incomplete Discord core module.'
+  [[ -w "$core" && -w "$core/index.js" ]] || fail "Discord core is not writable: $core. Run this installer as the Discord user, without sudo."
   installed="$core/discord-dccon"
   entry=$(core_entry_state "$core/index.js") || return 1
   if [[ $host_mod == shelter ]]; then
@@ -191,7 +273,7 @@ install_standalone() {
   fi
   if $remove && [[ ! -d "$installed" ]]; then fail 'No standalone installation in the current Discord core module.'; fi
   if $remove; then
-    [[ -z $app_before || $app_before == "$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")" ]] || fail 'Vencord app changed before removal.'
+    [[ -z $app_before || $app_before == "$(app_fingerprint)" ]] || fail 'Vencord app changed before removal.'
     local archive
     archive=$(remove_core_addon "$core") || return 1
     echo 'Standalone removed. Original Discord module restored; user data preserved.'
@@ -234,8 +316,8 @@ JS
   hash "$stage/original.js" > "$stage/original.sha256"
   # Complete preparation and app validation before changing the active runtime.
   if [[ $host_mod == vencord ]]; then
-    [[ $app_before == "$(shasum -a 256 "$app/Contents/Resources/"{app,_app}.asar "$app/Contents/MacOS/$app_binary")" ]] || fail 'Vencord app changed before installation.'
-  else
+    [[ $app_before == "$(app_fingerprint)" ]] || fail 'Vencord app changed before installation.'
+  elif ! is_linux; then
     codesign --verify --deep --strict "$app"
   fi
   if ! cp "$stage/index.js" "$core/index.js.installing"; then
@@ -243,7 +325,7 @@ JS
   fi
   previous=
   if [[ -d "$installed" ]]; then
-    previous="$core/discord-dccon-previous-$(uuidgen)"
+    previous="$core/discord-dccon-previous-$(unique_id)"
     if ! mv "$installed" "$previous"; then
       rm -f "$core/index.js.installing"; fail 'Could not archive installed runtime.'
     fi
@@ -263,6 +345,14 @@ JS
     echo "Standalone installed for Discord $channel $version. Start Discord normally."
   fi
   echo 'Discord core updates may require running this installer again.'
+}
+
+app_fingerprint() {
+  local resources
+  resources=$(app_resources "$app")
+  hash "$resources/app.asar"
+  hash "$resources/_app.asar"
+  if ! is_linux; then hash "$app/Contents/MacOS/$app_binary"; fi
 }
 
 purge_check_path() {
@@ -299,7 +389,8 @@ purge_archives() {
   done
 }
 purge_all() {
-  local support="$HOME/Library/Application Support" plugins client base folder module core addon file name entry reply i archive failed=false
+  local support plugins client base folder module core addon file name entry reply i archive failed=false
+  support=$(app_data_directory)
   local purge_paths=() purge_roots=() purge_cores=() purge_core_roots=()
   shopt -s nullglob
   for client in discord discordptb discordcanary; do
@@ -328,7 +419,11 @@ purge_all() {
       done
     done
   done
-  for name in discord-dccon discord-dccon-canary DCCon-shelter DCCon-shelter-poc; do purge_add "$support/$name" "$support"; done
+  for name in discord-dccon discord-dccon-ptb discord-dccon-canary DCCon-shelter DCCon-shelter-poc; do
+    purge_add "$support/$name" "$support"
+    # Runtime settings use the same ~/.config location across Linux client mods.
+    if is_linux && [[ $support != "$HOME/.config" ]]; then purge_add "$HOME/.config/$name" "$HOME/.config"; fi
+  done
   plugins="$support/BetterDiscord/plugins"
   purge_check_path "$plugins" "$support"
   for name in discord-dccon-cache discord-dccon-library DCCon-cache; do purge_add "$plugins/$name" "$plugins"; done
@@ -344,8 +439,8 @@ purge_all() {
   echo 'Browser/userscript and old Shelter IndexedDB settings are not removed. Clear this addon in its script/plugin manager; Discord profiles and other mods are preserved.'
   if [[ ${#purge_paths[@]} == 0 && ${#purge_cores[@]} == 0 ]]; then echo 'No known filesystem installation or data found.'; return; fi
   if $dryrun; then echo 'Dry run only. No files changed.'; return; fi
-  for client in Discord 'Discord PTB' 'Discord Canary'; do
-    if pgrep -x "$client" >/dev/null; then fail 'Fully quit all Discord channels before purging.'; fi
+  for client in Stable PTB Canary; do
+    if discord_running "$client"; then fail 'Fully quit all Discord channels before purging.'; fi
   done
   if ! $yes; then
     printf 'Permanently delete settings, saved cons, personal images and caches? Type PURGE: '
@@ -376,24 +471,34 @@ purge_all() {
 }
 
 # Online entry point.
-[[ $(uname -s) == Darwin ]] || fail 'This installer requires macOS.'
-mode=Auto; channel=Stable; version=; remove=false; purge=false; dryrun=false; yes=false; scoped=false
+installer_os=$(uname -s)
+case "$installer_os" in Darwin|Linux) ;; *) fail 'This installer requires macOS or Linux.';; esac
+if is_linux; then
+  [[ ${EUID:-$(id -u)} != 0 ]] || fail 'Run this installer as the Discord user, without sudo.'
+  [[ ${HOME:-} == /* && ${XDG_CONFIG_HOME:-$HOME/.config} == /* ]] || fail 'HOME and XDG_CONFIG_HOME must be absolute paths.'
+  for command in python3 sha256sum pgrep readlink; do
+    command -v "$command" >/dev/null || fail "Required Linux command not found: $command"
+  done
+  linux_native_path "$(readlink -m "$(app_data_directory)")"
+fi
+mode=Auto; channel=Stable; version=; discord_root=; remove=false; purge=false; dryrun=false; yes=false; scoped=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mode|--channel|--version)
+    --mode|--channel|--version|--discord-root)
       scoped=true
       [[ $# -ge 2 ]] || fail "Missing value for $1"
-      case "$1" in --mode) mode=$2;; --channel) channel=$2;; --version) version=$2;; esac
+      [[ -n $2 ]] || fail "Missing value for $1"
+      case "$1" in --mode) mode=$2;; --channel) channel=$2;; --version) version=$2;; --discord-root) discord_root=$2;; esac
       shift 2 ;;
     --remove) remove=true; shift ;;
     --purge) purge=true; shift ;;
     --dry-run) dryrun=true; shift ;;
     --yes) yes=true; shift ;;
-    *) fail 'Usage: bash install.sh [--mode auto|betterdiscord|standalone] [--channel stable|ptb|canary] [--version vX.Y.Z] [--remove] [--purge [--dry-run|--yes]]' ;;
+    *) fail 'Usage: bash install.sh [--mode auto|betterdiscord|standalone] [--channel stable|ptb|canary] [--version vX.Y.Z] [--discord-root <Linux app directory>] [--remove] [--purge [--dry-run|--yes]]' ;;
   esac
 done
 if $purge; then
-  if $remove || $scoped; then fail '--purge covers all channels; do not combine it with --remove, --channel, --mode or --version.'; fi
+  if $remove || $scoped; then fail '--purge covers all channels; do not combine it with --remove, --channel, --mode, --version or --discord-root.'; fi
   purge_all
   exit
 fi
@@ -410,8 +515,26 @@ case "$channel" in
   canary|Canary) channel=Canary; app='/Applications/Discord Canary.app'; data="$HOME/Library/Application Support/discordcanary"; process='Discord Canary' ;;
   *) fail 'Channel must be stable, ptb or canary.' ;;
 esac
-pgrep -x "$process" >/dev/null && fail "Fully quit Discord $channel first."
-bd="$HOME/Library/Application Support/BetterDiscord"
+if is_linux; then
+  case "$channel" in
+    Stable) client=discord; binary=Discord ;;
+    PTB) client=discordptb; binary=DiscordPTB ;;
+    Canary) client=discordcanary; binary=DiscordCanary ;;
+  esac
+  data="$(app_data_directory)/$client"
+  if [[ -n $discord_root ]]; then
+    [[ -d $discord_root ]] || fail "Discord not found: $discord_root"
+    app=$discord_root
+  else
+    app=$(find_linux_app "$data" "$client" "$binary")
+  fi
+  app=$(readlink -f "$app")
+  linux_native_path "$app"
+  linux_native_path "$(readlink -m "$data")"
+elif [[ -n $discord_root ]]; then fail '--discord-root is only supported on Linux.'
+fi
+if discord_running "$channel"; then fail "Fully quit Discord $channel first."; fi
+bd="$(app_data_directory)/BetterDiscord"
 detected=$(detect_installation "$app" "$data" "$bd")
 host_mod=
 if [[ $detected == Vencord ]]; then host_mod=vencord; detected=Standalone; fi
@@ -424,6 +547,11 @@ trap '[[ -z "$stage" ]] || rm -rf "$stage"; [[ -z "$workspace" ]] || rm -rf "$wo
 if $remove; then
   if [[ $mode == BetterDiscord ]]; then install_betterdiscord; else install_standalone "$host_mod"; fi
   exit
+fi
+if is_linux; then
+  for command in curl unzip; do
+    command -v "$command" >/dev/null || fail "Required Linux command not found: $command"
+  done
 fi
 repository=80ROkWOC4j/discord-dccon
 release="https://api.github.com/repos/$repository/releases/latest"
@@ -458,6 +586,7 @@ expected=$(json_value "$workspace/checksums.json" "$asset")
 [[ $expected =~ ^[a-fA-F0-9]{64}$ ]] || fail 'Invalid package checksum.'
 [[ $(hash "$workspace/package.zip") == "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" ]] || fail 'Downloaded package checksum mismatch. No installation was changed.'
 mkdir "$workspace/package"
-/usr/bin/ditto -x -k "$workspace/package.zip" "$workspace/package"
+if is_linux; then unzip -q "$workspace/package.zip" -d "$workspace/package";
+else /usr/bin/ditto -x -k "$workspace/package.zip" "$workspace/package"; fi
 package="$workspace/package"
 if [[ $mode == BetterDiscord ]]; then install_betterdiscord; else install_standalone "$host_mod"; fi
