@@ -3,12 +3,18 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Stable version to release from main (for example 4.0.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && 'main' || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -19,15 +25,26 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
     steps:
+      - name: Require main for manual releases
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Select main when starting a stable release.' }
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          persist-credentials: ${{ github.event_name == 'workflow_dispatch' }}
+          fetch-depth: 0
           submodules: recursive
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
+      - name: Prepare release version
+        if: github.event_name == 'workflow_dispatch'
+        run: node .github/scripts/release-version.cjs prepare
       - run: npm ci
       - run: npm run build:plugin
       - name: Check release version
@@ -36,7 +53,7 @@ jobs:
           const fs = require('node:fs');
           const version = require('./package.json').version;
           const plugin = fs.readFileSync('artifacts/betterdiscord/discord-dccon.plugin.js', 'utf8').match(/@version\s+(\S+)/)?.[1];
-          const tag = process.env.GITHUB_REF_NAME;
+          const tag = process.env.RELEASE_TAG;
           if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag) || tag !== `v${version}` || plugin !== version) {
             throw Error(`Version mismatch: tag=${tag}, package=${version}, plugin=${plugin}`);
           }
@@ -46,13 +63,26 @@ jobs:
       - run: npm test
       - name: Build userscript
         run: npm run build:userscript
+      - name: Build release packages
+        run: npm run build:packages
+      - name: Check assets before creating the tag
+        run: |
+          $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'artifacts/userscript/discord-dccon.user.js', 'artifacts/betterdiscord/discord-dccon.plugin.js', 'install.ps1', 'install.sh')
+          foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset" } }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $scriptVersion = [regex]::Match((Get-Content artifacts/userscript/discord-dccon.user.js -Raw), '(?m)^// @version\s+(\S+)').Groups[1].Value
+          if ($scriptVersion -ne $version) { throw 'Userscript version mismatch.' }
+      - name: Commit version and push tag
+        if: github.event_name == 'workflow_dispatch'
+        run: node .github/scripts/release-version.cjs publish-tag
+      # GITHUB_TOKEN tag pushes do not trigger another workflow; publish here.
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $tag = $env:GITHUB_REF_NAME
+          $tag = $env:RELEASE_TAG
           $assets = @('artifacts/dist/discord-dccon-betterdiscord.zip', 'artifacts/dist/discord-dccon-standalone.zip', 'artifacts/dist/checksums.json', 'artifacts/userscript/discord-dccon.user.js', 'artifacts/betterdiscord/discord-dccon.plugin.js', 'install.ps1', 'install.sh')
           foreach ($asset in $assets) { if (!(Test-Path -LiteralPath $asset)) { throw "Missing release asset: $asset" } }
           $existing = gh release view $tag --json isDraft 2>$null
@@ -65,5 +95,27 @@ jobs:
           gh release upload $tag @assets --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Asset upload failed; release remains a draft.' }
           if ($tag.Contains('-')) { gh release edit $tag --draft=false --prerelease }
+          elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { gh release edit $tag --draft=false --latest }
           else { gh release edit $tag --draft=false }
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }
+
+  sync-dev:
+    needs: release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Merge main into dev or open a conflict PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ inputs.version }}
+        run: node .github/scripts/sync-dev.cjs

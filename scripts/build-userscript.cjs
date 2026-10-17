@@ -1,14 +1,22 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const {version} = require('../package.json');
+const {name, version, author, homepage, bugs, license} = require('../package.json');
 const root = path.resolve(__dirname, '..');
 async function main() {
   const source = require('./build.cjs').buildEntry('userscript');
   const metadata = `// ==UserScript==
-// @name discord-dccon Attach PoC
-// @namespace https://github.com/80ROkWOC4j/discord-dccon
+// @name ${name}
+// @namespace ${homepage}
 // @version ${version}
-// @description Discord에서 디시콘을 검색하고 사용합니다.
+// @author ${author}
+// @description Search and use DCCon images in Discord.
+// @description:ko Discord에서 디시콘을 검색하고 사용합니다.
+// @homepageURL ${homepage}
+// @supportURL ${bugs.url}
+// @source ${homepage}
+// @license ${license}
+// @updateURL ${homepage}/releases/latest/download/discord-dccon.user.js
+// @downloadURL ${homepage}/releases/latest/download/discord-dccon.user.js
 // @match https://discord.com/*
 // @match https://ptb.discord.com/*
 // @match https://canary.discord.com/*
