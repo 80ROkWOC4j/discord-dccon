@@ -206,17 +206,26 @@ test('generated shelter and BetterDiscord entries parse', () => {
   assert.doesNotThrow(() => new vm.Script(buildShelterPlugin('test')));
 });
 
-test('plugin starts after first-store retry and cleans up through the actual entrypoint', async () => {
+for (const legacyOrder of ['absent', 'before', 'after', 'disabled']) test(`plugin removes legacy registration and starts after first-store retry (legacy: ${legacyOrder})`, async () => {
   const {JSDOM} = require('jsdom');
   const dom = new JSDOM('<!doctype html><body></body>');
   const timers = [], events = [];
+  const installed = {'discord-dccon': {}, unrelated: {on: true}};
+  const legacySettings = {dccons: [{info: {title: 'saved pack'}}]};
+  const savedSettings = {'dccon-poc': legacySettings};
+  const removed = [];
+  let legacyRunning = false;
+  if (legacyOrder !== 'absent') installed['dccon-poc'] = {on: legacyOrder !== 'disabled'};
+  const startLegacy = () => {assert.ok(installed['dccon-poc']); legacyRunning = true;};
   let firstStore = true, lifecycle, started;
   const host = {React: {Component: class {}, createElement() {}}, ReactDOM: {createPortal() {}}, ReactDOMClient: {createRoot() {}},
     util: {getFiber() {}}, flux: {storesFlat: {}}, http: {_raw: {get() {}, post() {}, put() {}, del() {}}},
     plugin: {id: 'discord-dccon', store: {}, flushStore() {
       if (firstStore) {firstStore = false; throw Error('not a shelter storage proxy');}
     }},
-    plugins: {stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = create(); started = lifecycle.onLoad();}},
+    plugins: {installedPlugins: () => installed,
+      removePlugin(id) {assert.equal(id, 'dccon-poc'); assert.equal(legacyRunning, legacyOrder !== 'disabled'); legacyRunning = false; removed.push(id); delete installed[id];},
+      stopPlugin: () => lifecycle.onUnload(), startPlugin() {lifecycle = create(); started = lifecycle.onLoad();}},
     ui: {injectCss() {events.push('mount'); return () => events.push('unmount');}, showToast: message => assert.fail(message.content)}};
   const native = {config: async () => ({version: 2, settings: {dccons: [], recent: [], embeddingEnabled: false}})};
   const webpack = {getByKeys: () => ({}), isReady: () => true};
@@ -226,9 +235,16 @@ test('plugin starts after first-store retry and cleans up through the actual ent
   vm.runInNewContext(require('../scripts/build.cjs').buildEntry('shelter', {format: 'cjs'}), context);
   const create = () => context.module.exports.createShelterPlugin(host, native, webpack, 'test');
   try {
-    lifecycle = create(); await lifecycle.onLoad();
+    if (legacyOrder === 'before') startLegacy();
+    lifecycle = create(); const loading = lifecycle.onLoad();
+    if (legacyOrder === 'after') startLegacy();
+    await loading;
     assert.equal(timers.length, 1); timers.shift()(); await started;
     assert.deepEqual(events, ['mount']);
+    assert.deepEqual(removed, legacyOrder === 'absent' ? [] : ['dccon-poc']);
+    assert.equal(legacyRunning, false);
+    assert.deepEqual(Object.keys(installed).sort(), ['discord-dccon', 'unrelated']);
+    assert.equal(savedSettings['dccon-poc'], legacySettings);
     lifecycle.onUnload(); assert.deepEqual(events, ['mount', 'unmount']);
   } finally {dom.window.close();}
 });

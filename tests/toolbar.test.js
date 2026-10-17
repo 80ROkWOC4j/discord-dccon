@@ -29,7 +29,8 @@ for (const installation of ['BetterDiscord', 'shelter', 'BetterDiscord bundle', 
     Webpack: webpack, Plugins: {}, Data: {load: (_, key) => data[key], save: (_, key, value) => {data[key] = value;}},
     DOM: {addStyle: (_, css) => {removeCss = injectCss(css);}, removeStyle: () => removeCss?.()}};
   const shelter = {React, ReactDOM, ReactDOMClient: {createRoot}, util: {getFiber: editor => fibers.get(editor)},
-    flux: {storesFlat: {SelectedChannelStore: store}}, http: {_raw: {get() {},post() {},put() {},del() {}}}, plugin: {store: {}, flushStore() {}}, ui: {injectCss, showToast: toast => assert.fail(toast.content)}};
+    flux: {storesFlat: {SelectedChannelStore: store}}, http: {_raw: {get() {},post() {},put() {},del() {}}}, plugin: {store: {}, flushStore() {}},
+    plugins: {installedPlugins: () => ({})}, ui: {injectCss, showToast: toast => assert.fail(toast.content)}};
   const native = {config: async (method, args) => {
     if (method === 'save') data[args[0]] = args[1];
     return {version: 2, settings: structuredClone(data)};
