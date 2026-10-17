@@ -59,11 +59,11 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       if (!entries.length && !busy) return null;
       return h("section", { className: "dccon-buffer", "aria-label": "전송 대기 디시콘", "data-count": entries.length },
         h("div", { className: "dccon-buffer-heading" },
-          h("span", {role: "status"}, busy ? (platform.composer?.attachFiles ? "첨부 중…" : "전송 중…") : "모아둔 콘 " + entries.length + "/9"),
+          h("span", {role: "status"}, busy ? "처리 중…" : "모아둔 콘 " + entries.length + "/9"),
           h("div", {className: "dccon-buffer-actions"},
             h("button", {type: "button", disabled: busy, onClick: () => removeBuffered(channelId)}, "전체 비우기"),
             h("button", {type: "button", className: "dccon-buffer-send", disabled: busy || !entries.length,
-              onClick: () => sendDCConMessage(null, {channelId})}, platform.composer?.attachFiles ? "입력창에 첨부" : "전송"))),
+              onClick: () => sendDCConMessage(null, {channelId})}, "보내기"))),
         h("div", {className: "dccon-buffer-preview"},
           h("div", {className: "dccon-buffer-items", "data-count": entries.length}, entries.map((entry, index) => h("button", {
           key: index, type: "button", disabled: busy, title: entry.con.title + " 제거",
@@ -73,14 +73,11 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
           h("span", {className: "dccon-buffer-remove", "aria-hidden": true}, "×"))))),
         h("button", {type: "button", className: "dccon-buffer-split", disabled: busy || entries.length !== 1,
           title: "이미지 1개를 3×3으로 나눕니다. 애니메이션은 유지됩니다.",
-          onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, platform.composer?.attachFiles ? "9개로 쪼개서 첨부" : "9개로 쪼개서 보내기"),
+          onClick: () => sendDCConMessage(null, {channelId, splitNine: true})}, "9개로 쪼개서 보내기"),
         h("button", {type: "button", className: "dccon-buffer-merge", disabled: busy || !this.state.mergeReady,
           title: this.state.mergeReason || "선택 순서대로 가로로 이어붙입니다. 원본 크기와 애니메이션을 유지합니다.",
-          onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, platform.composer?.attachFiles ? "합쳐서 첨부(3개 이하)" : "합쳐서 전송(3개 이하)"),
-        entries.length <= 3 && this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason),
-        h("p", {className: "dccon-buffer-hint"}, platform.composer?.attachFiles
-          ? "일반 클릭은 콘을 하나 더 추가해 입력창에 첨부합니다. Discord에서 직접 전송하세요."
-          : "예상 배치 · 기기마다 크기는 달라질 수 있어요. 일반 클릭은 콘을 하나 더 추가해 전송합니다."));
+          onClick: () => sendDCConMessage(null, {channelId, mergeImages: true})}, "합쳐서 보내기(3개 이하)"),
+        entries.length <= 3 && this.state.mergeReason && h("p", {className: "dccon-buffer-merge-reason", role: "status"}, this.state.mergeReason));
     }
   }
   class DCConCategory extends platform.react.Component<{dccon: Pack}, {expanded: boolean}> {
@@ -394,11 +391,8 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
                     !this.state.dccons.length && h("button", { type: "button", onClick: this.props.onManage }, "팩 추가하기"))
           )
         ),
-        h("div", { className: "dccon-footer" }, h("span", {className: "dccon-desktop-hint"}, platform.composer?.attachFiles
-          ? "탭/클릭: 입력창에 첨부 · 길게 누르기/Shift+클릭: 모아두기 · 전송은 Discord에서 직접"
-          : "탭/클릭: 누적 콘과 함께 전송 · 길게 누르기/Shift+클릭: 모아두기 (최대 9개)"),
-          h("span", {className: "dccon-compact-hint"}, platform.composer?.attachFiles
-            ? "길게 눌러 모으기 · 탭하여 입력창에 첨부" : "길게 눌러 모으기 · 탭하여 전송"))
+        h("div", { className: "dccon-footer" }, h("span", {className: "dccon-desktop-hint"}, "Shift+클릭: 모아두기 · 최대 9개"),
+          h("span", {className: "dccon-compact-hint"}, "길게 눌러 모아두기 · 최대 9개"))
       );
     }
   }

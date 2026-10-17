@@ -39,12 +39,16 @@ Discord 업데이트 하면서 일부 파일이 바뀌면 작동하지 않을 �
 
 ### 웹 Discord에서 사용하기
 
-**Firefox(데스크톱, 안드로이드) + Violentmonkey**에서 테스트 되었습니다.
-
-1. Firefox에 [Violentmonkey](https://violentmonkey.github.io/get-it/) 확장 기능을 설치합니다.
-2. **[디시콘 유저스크립트 설치](https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.0-beta.2/discord-dccon.user.js)**를 클릭하고, 열린 Violentmonkey 화면에서 **설치**를 누릅니다.
+1. Firefox(권장)에 [Violentmonkey](https://violentmonkey.github.io/get-it/) 확장 기능을 설치합니다.
+2. **[디시콘 유저스크립트 설치](https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/discord-dccon.user.js)**를 클릭하고, 열린 Violentmonkey 화면에서 **설치**를 누릅니다.
 
 안드로이드에서는 [Wappify](https://addons.mozilla.org/en-US/firefox/addon/wappify/)랑 쓰면 좀 더 편합니다.
+
+모바일에서는 팩 목록이 가로로, 모아둔 콘이 아래쪽에 표시됩니다.
+
+<img src="images/mobile.png" alt="안드로이드 firefox" width="360">
+
+<sub>채널 정보 마스킹함</sub>
 
 <details>
 <summary>PTB·Canary, 제거 및 기타 옵션</summary>
@@ -123,15 +127,17 @@ OPTIONS
 | Shift+클릭 | 디시콘 누적 하면서 선택창 유지 |
 | ☆ / ★ | 즐겨찾기 추가 / 해제 |
 
+웹 Discord(모바일 포함)에서는 클릭이나 터치로 바로 전송하지 않고 입력창에 이미지를 첨부합니다.
+
 ### 콘 모으기
 
-Shift+클릭한 콘은 **모아둔 콘** 패널에 예상 메시지 배치로 표시됩니다. **전송**을 누르면 미리보기의 콘만 한 메시지로 보내고, 콘을 일반 클릭하면 그 콘을 하나 더 추가해 전송합니다. 미리보기의 콘을 누르면 개별 삭제할 수 있습니다. 미리보기는 pc 환경 기준으로 맞춰졌습니다.
+Shift+클릭한 콘은 **모아둔 콘** 패널에 예상 메시지 배치로 표시됩니다. **보내기**를 누르면 미리보기의 콘만 한 메시지로 보내고, 콘을 일반 클릭하면 그 콘을 하나 더 추가해 전송합니다. 미리보기의 콘을 누르면 개별 삭제할 수 있습니다. 미리보기는 pc 환경 기준으로 맞춰졌습니다.
 
 <img src="images/multi-preview.png" alt="미리보기" width="780">
 
 콘을 **1개만 모으면** 미리보기 아래의 **9개로 쪼개서 보내기** 버튼이 활성화됩니다. 이미지를 3×3으로 나눠 한 메시지로 보냅니다.
 
-콘을 **2~3개 모으면**, 같은 길이면 **합쳐서 전송** 버튼이 활성화됩니다. 이러면 이미지 하나로 보냅니다.
+콘을 **2~3개 모으면**, 같은 길이면 **합쳐서 보내기(3개 이하)** 버튼이 활성화됩니다. 이러면 이미지 하나로 보냅니다.
 
 ### 공통 설정·데이터 경로
 
@@ -166,9 +172,9 @@ cache/
 
 설정에서 의미 기반 검색을 키면 임베딩모델을 다운받고 디시콘들 임베딩 합니다. 기존의 검색은 벡터 검색으로 바뀝니다.
 
+<img src="images/cry.png" alt="슬픔" width="520">
 <img src="images/angry.png" alt="angry" width="520">
-<img src="images/cry.png" alt="cry" width="520">
-<img src="images/namanani.png" alt="나만아니면돼" width="520">
+<img src="images/namanani.png" alt="나만아니면" width="520">
 
 ## 진단
 

@@ -8,7 +8,7 @@ async function main() {
 // @name discord-dccon Attach PoC
 // @namespace https://github.com/80ROkWOC4j/discord-dccon
 // @version ${version}
-// @description 디시콘을 검색해 Discord 입력창에 첨부합니다. 전송은 직접 하세요.
+// @description Discord에서 디시콘을 검색하고 사용합니다.
 // @match https://discord.com/*
 // @match https://ptb.discord.com/*
 // @match https://canary.discord.com/*
