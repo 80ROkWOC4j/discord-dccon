@@ -32,8 +32,6 @@ async function fixture(t, xdg = false) {
   }
   // PowerShell-authored release metadata can have a UTF-8 BOM.
   await put(path.join(packages, 'checksums.json'), '\uFEFF' + JSON.stringify(checksums));
-  await put(path.join(packages, 'release.json'), JSON.stringify({assets: [...Object.keys(checksums), 'checksums.json'].map(name => ({name,
-    browser_download_url: `https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.1/${name}`}))}));
   await put(path.join(bin, 'pgrep'), '#!/bin/bash\n[[ -n "${DCCON_RUNNING:-}" && "$2" == "$DCCON_RUNNING" ]]\n');
   await put(path.join(bin, 'curl'), `#!/bin/bash
 set -eu
@@ -43,10 +41,10 @@ while [[ $# -gt 0 ]]; do
  case "$1" in -o) out=$2;shift 2;; https://*) url=$1;shift;; *) shift;; esac
 done
 case "$url" in
- https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases/latest|https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases/tags/v4.0.1) name=release.json;;
- https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.1/*) name=\${url##*/};;
+ https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/*|https://github.com/80ROkWOC4j/discord-dccon/releases/download/v4.0.1/*) name=\${url##*/};;
  *) echo "unexpected URL: $url" >&2; exit 99;;
 esac
+printf '%s\\n' "$url" >> "$DCCON_PACKAGES/requests.log"
 cp "$DCCON_PACKAGES/$name" "$out"
 if [[ -n "\${DCCON_CORRUPT:-}" && $name == *.zip ]]; then printf corrupt >> "$out"; fi
 `);
@@ -75,8 +73,18 @@ exec /bin/${command} "$@"
     roots[channel] = {app, resources, core, data};
   }
   const run = (args = [], ok = true) => {
+    require('node:fs').writeFileSync(path.join(packages, 'requests.log'), '');
     const result = spawnSync('/bin/bash', [path.join(repo, 'install.sh'), ...args], {env, encoding: 'utf8'});
     assert.equal(result.status === 0, ok, result.stdout + result.stderr);
+    if (ok) {
+      const requests = require('node:fs').readFileSync(path.join(packages, 'requests.log'), 'utf8').trim().split('\n').filter(Boolean);
+      const tagIndex = args.indexOf('--version');
+      const base = 'https://github.com/80ROkWOC4j/discord-dccon/releases/' +
+        (tagIndex < 0 ? 'latest/download' : 'download/' + args[tagIndex + 1]);
+      const asset = result.stdout.includes('Selected BetterDiscord') ? 'betterdiscord' : 'standalone';
+      assert.deepEqual(requests, args.includes('--remove') || args.includes('--purge') ? [] :
+        [`${base}/discord-dccon-${asset}.zip`, `${base}/checksums.json`]);
+    }
     return result.stdout + result.stderr;
   };
   return {dir, home, support, bin, packages, env, roots, run};

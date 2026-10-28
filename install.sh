@@ -554,34 +554,18 @@ if is_linux; then
   done
 fi
 repository=80ROkWOC4j/discord-dccon
-release="https://api.github.com/repos/$repository/releases/latest"
+download_base="https://github.com/$repository/releases/latest/download"
 if [[ -n "$version" ]]; then
   [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || fail 'Version must be a release tag such as v3.5.1.'
-  release="https://api.github.com/repos/$repository/releases/tags/$version"
+  download_base="https://github.com/$repository/releases/download/$version"
 fi
 workspace=$(mktemp -d "${TMPDIR:-/tmp}/discord-dccon-install.XXXXXX")
 fetch() { curl --fail --location --silent --show-error --retry 2 --connect-timeout 15 --max-time 180 --proto '=https' --proto-redir '=https' -H 'User-Agent: discord-dccon-Installer' "$1" -o "$2"; }
-fetch "$release" "$workspace/release.json"
 case "$mode" in BetterDiscord) asset=discord-dccon-betterdiscord.zip;; Standalone) asset=discord-dccon-standalone.zip;; esac
-asset_url=; checksum_url=; index=0
-while true; do
-  name=$(json_value "$workspace/release.json" assets "$index" name)
-  [[ -n "$name" ]] || break
-  case "$name" in
-    "$asset"|checksums.json)
-      url=$(json_value "$workspace/release.json" assets "$index" browser_download_url)
-      [[ $url == "https://github.com/$repository/releases/download/"* ]] || fail 'Unexpected release asset URL.'
-      if [[ $name == "$asset" ]]; then
-        [[ -z "$asset_url" ]] || fail 'Duplicate package asset.'; asset_url=$url
-      else
-        [[ -z "$checksum_url" ]] || fail 'Duplicate checksum asset.'; checksum_url=$url
-      fi ;;
-  esac
-  index=$((index + 1))
-done
-[[ -n "$asset_url" && -n "$checksum_url" ]] || fail "Release is missing $asset or checksums.json. No installation was changed."
-fetch "$asset_url" "$workspace/package.zip"
-fetch "$checksum_url" "$workspace/checksums.json"
+# Public release downloads do not consume the unauthenticated GitHub API quota.
+# If latest changes between these downloads, checksum verification fails safely.
+fetch "$download_base/$asset" "$workspace/package.zip"
+fetch "$download_base/checksums.json" "$workspace/checksums.json"
 expected=$(json_value "$workspace/checksums.json" "$asset")
 [[ $expected =~ ^[a-fA-F0-9]{64}$ ]] || fail 'Invalid package checksum.'
 [[ $(hash "$workspace/package.zip") == "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" ]] || fail 'Downloaded package checksum mismatch. No installation was changed.'

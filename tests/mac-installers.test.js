@@ -24,7 +24,6 @@ test('unified Mac installer: three channels, both modes and offline removal',{sk
   checksums[asset]=hash(await fs.readFile(archive));
  }
  await put(path.join(packages,'checksums.json'),JSON.stringify(checksums));
- await put(path.join(packages,'release.json'),JSON.stringify({assets:[...Object.keys(checksums),'checksums.json'].map(name=>({name,browser_download_url:'https://github.com/80ROkWOC4j/discord-dccon/releases/download/v3.5.1/'+name}))}));
  await put(path.join(bin,'codesign'),'#!/bin/bash\nexit 0\n');
  await put(path.join(bin,'pgrep'),'#!/bin/bash\n[[ "${DCCON_RUNNING:-}" == "$2" ]]\n');
  await put(path.join(bin,'curl'),`#!/bin/bash
@@ -35,8 +34,7 @@ while [[ $# -gt 0 ]]; do
  case "$1" in -o) out=$2;shift 2;; https://*) url=$1;shift;; *) shift;; esac
 done
 case "$url" in
- https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases/latest) name=release.json;;
- https://github.com/80ROkWOC4j/discord-dccon/releases/download/v3.5.1/*) name=\${url##*/};;
+ https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/*|https://github.com/80ROkWOC4j/discord-dccon/releases/download/v3.5.1/*) name=\${url##*/};;
  *) exit 99;;
 esac
 cp "$DCCON_PACKAGES/$name" "$out"
