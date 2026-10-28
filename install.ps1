@@ -457,28 +457,28 @@ if ($Remove) {
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $repository = '80ROkWOC4j/discord-dccon'
-$releaseUrl = "https://api.github.com/repos/$repository/releases/latest"
-if ($Version) {$releaseUrl = "https://api.github.com/repos/$repository/releases/tags/$([uri]::EscapeDataString($Version))"}
-$headers = @{'User-Agent'='discord-dccon-Installer';'Accept'='application/vnd.github+json'}
-try {$release = Invoke-RestMethod -Uri $releaseUrl -Headers $headers}
-catch {throw "Could not find a published discord-dccon release. No installation was changed. $($_.Exception.Message)"}
+$downloadBase = "https://github.com/$repository/releases/latest/download"
+if ($Version) {
+    if ($Version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$') {throw 'Version must be a release tag such as v3.5.1.'}
+    $downloadBase = "https://github.com/$repository/releases/download/$Version"
+}
 $assetName = 'discord-dccon-' + $Mode.ToLowerInvariant() + '.zip'
-$archiveAsset = @($release.assets | Where-Object {$_.name -eq $assetName})
-$checksumAsset = @($release.assets | Where-Object {$_.name -eq 'checksums.json'})
-if ($archiveAsset.Count -ne 1 -or $checksumAsset.Count -ne 1) {throw "Release $($release.tag_name) is missing $assetName or checksums.json. No installation was changed."}
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $workspace = Join-Path $tempBase ('discord-dccon-install-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $workspace | Out-Null
 try {
-    Write-Host "Downloading discord-dccon $($release.tag_name) ($Mode)..."
+    $releaseLabel = if ($Version) {$Version} else {'latest'}
+    Write-Host "Downloading discord-dccon $releaseLabel ($Mode)..."
     $archive = Join-Path $workspace $assetName
     $checksumPath = Join-Path $workspace 'checksums.json'
-    foreach ($download in @(@($archiveAsset[0], $archive), @($checksumAsset[0], $checksumPath))) {
-        $url = [uri]$download[0].browser_download_url
-        if ($url.Scheme -ne 'https' -or $url.Host -ne 'github.com' -or !$url.AbsolutePath.StartsWith("/$repository/releases/download/")) {
-            throw 'Unexpected release asset URL.'
+    # Direct release downloads avoid the unauthenticated GitHub API quota.
+    # If latest changes between downloads, checksum verification fails safely.
+    foreach ($download in @(@("$downloadBase/$assetName", $archive), @("$downloadBase/checksums.json", $checksumPath))) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $download[0] -Headers @{'User-Agent'='discord-dccon-Installer'} -OutFile $download[1]
+        } catch {
+            throw "Could not download release file $($download[0]). No installation was changed. $($_.Exception.Message)"
         }
-        Invoke-WebRequest -UseBasicParsing -Uri $url.AbsoluteUri -Headers @{'User-Agent'='discord-dccon-Installer'} -OutFile $download[1]
     }
     $checksums = Get-Content -LiteralPath $checksumPath -Raw | ConvertFrom-Json
     $expected = $checksums.$assetName
