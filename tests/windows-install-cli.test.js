@@ -63,14 +63,16 @@ function Move-Item {
  Microsoft.PowerShell.Management\\Move-Item -LiteralPath $LiteralPath -Destination $Destination
 }
 
-function Invoke-RestMethod {
- param($Uri,$Headers)
- if ($env:DCCON_OFFLINE) {throw 'Download attempted while removing'}
- $names=@('discord-dccon-betterdiscord.zip','discord-dccon-standalone.zip','checksums.json')
- return @{tag_name='v3.5.1';assets=@($names | ForEach-Object {@{name=$_;browser_download_url="https://github.com/80ROkWOC4j/discord-dccon/releases/download/v3.5.1/$_"}})}
-}
+function Invoke-RestMethod { throw 'Unexpected GitHub API request' }
 function Invoke-WebRequest {
  param([switch]$UseBasicParsing,$Uri,$Headers,$OutFile)
+  $base = if ($env:DCCON_EXPECT_VERSION) {"download/$($env:DCCON_EXPECT_VERSION)"} else {'latest/download'}
+  $name = ([uri]$Uri).Segments[-1]
+  if ($name -notin @('discord-dccon-standalone.zip','discord-dccon-betterdiscord.zip','checksums.json') -or
+      $Uri -ne "https://github.com/80ROkWOC4j/discord-dccon/releases/$base/$name") {throw 'Unexpected release download URL'}
+  if ($env:DCCON_OFFLINE) {throw 'Download attempted while removing'}
+  if ($env:DCCON_REQUEST_LOG) {Add-Content -LiteralPath $env:DCCON_REQUEST_LOG -Value $Uri}
+
  $name=([uri]$Uri).Segments[-1]
  Copy-Item -LiteralPath (Join-Path $env:DCCON_DIST $name) -Destination $OutFile
  if ($env:DCCON_CORRUPT -and $name.EndsWith('.zip')) {Add-Content -LiteralPath $OutFile -Value corrupt}
@@ -371,4 +373,21 @@ for(const shell of shells) test(`Shelter coexistence preserves sheltupdate throu
   assert.equal(await fs.readFile(path.join(core,'index.js'),'utf8'),host);
   for(let i=0;i<files.length;i++)assert.deepEqual(await fs.readFile(files[i]),before[i]);
  }
+});
+
+for (const shell of shells) test(`Windows installer downloads two assets without API requests (${path.basename(shell)})`, async t => {
+  const f = await fixture(t);
+  const log = path.join(f.dir, 'requests.log');
+  for (const version of ['', 'v4.0.1']) {
+    await put(log);
+    const args = version ? ['-Version', version] : [];
+    const result = spawnSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', f.script, ...args], {
+      cwd: repo, encoding: 'utf8', env: {...f.env, DCCON_EXPECT_VERSION: version, DCCON_REQUEST_LOG: log},
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const base = 'https://github.com/80ROkWOC4j/discord-dccon/releases/' + (version ? `download/${version}` : 'latest/download');
+    assert.deepEqual((await fs.readFile(log, 'utf8')).replace(/^\uFEFF/, '').trim().split(/\r?\n/), [
+      `${base}/discord-dccon-standalone.zip`, `${base}/checksums.json`,
+    ]);
+  }
 });

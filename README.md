@@ -25,11 +25,13 @@ Discord 종료하고 아래 명령을 실행합니다. **BetterDiscord 혹은 Sh
 powershell -c "irm https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.ps1 | iex"
 ```
 
-**macOS — 터미널**
+**macOS·Linux — 터미널**
 
 ```sh
 curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh | bash
 ```
+
+Linux는 Flatpak·Snap으로 설치한 Discord는 지원하지 않습니다.
 
 Discord 업데이트 하면서 일부 파일이 바뀌면 작동하지 않을 수 있습니다. 그럴 때는 재설치 해야 합니다.
 
@@ -64,7 +66,7 @@ powershell -noprofile -executionpolicy bypass -file .\install.ps1 -channel ptb
 powershell -noprofile -executionpolicy bypass -file .\install.ps1 -remove
 ```
 
-macOS에서는 `bash -s --` 뒤에 옵션을 지정합니다.
+macOS·Linux에서는 `bash -s --` 뒤에 옵션을 지정합니다.
 
 ```sh
 curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh | bash -s -- --channel ptb
@@ -72,7 +74,14 @@ curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/
 curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh | bash -s -- --remove
 ```
 
-Windows는 `-option`, macOS는 `--option` 형식을 사용합니다.
+Windows는 `-option`, macOS·Linux는 `--option` 형식을 사용합니다.
+
+Linux에서 설치 경로를 직접 지정하려면 스크립트를 파일로 저장하고, `resources` 폴더가 들어 있는 Discord 디렉터리를 전달합니다. 채널은 `--channel`로 별도 선택합니다.
+
+```sh
+curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh -o install.sh
+bash install.sh --discord-root "$HOME/apps/Discord"
+```
 
 ```text
 SYNOPSIS
@@ -105,6 +114,10 @@ OPTIONS
     -discordroot <path>
         Windows 전용. Discord 설치 경로를 직접 지정.
 
+    --discord-root <path>
+        Linux 전용. resources 폴더가 들어 있는 Discord 설치 디렉터리.
+        설치·업데이트·제거 시 사용 가능. --purge와 함께 사용 불가.
+
     -pluginsdirectory <path>
         Windows 전용. BetterDiscord 플러그인 폴더를 직접 지정.
 ```
@@ -120,7 +133,7 @@ powershell -noprofile -executionpolicy bypass -file .\install.ps1 -purge
 ```
 
 ```sh
-# macOS: 스크립트를 파일로 저장한 뒤 실행
+# macOS·Linux: 스크립트를 파일로 저장한 뒤 실행
 curl -fsSL https://github.com/80ROkWOC4j/discord-dccon/releases/latest/download/install.sh -o install.sh
 bash install.sh --purge --dry-run
 bash install.sh --purge

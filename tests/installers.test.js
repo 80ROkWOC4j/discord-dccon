@@ -38,14 +38,15 @@ function Get-Process {
     [pscustomobject]@{Path=$env:DCCON_TEST_PROCESS}
   }
 }
-function Invoke-RestMethod {
-  param($Uri,$Headers)
-  if ($Uri -ne 'https://api.github.com/repos/80ROkWOC4j/discord-dccon/releases/latest') {throw 'Wrong API endpoint'}
-  $names = if ($Missing) {@()} else {@('discord-dccon-betterdiscord.zip','discord-dccon-standalone.zip','checksums.json')}
-  return @{tag_name='v3.0.0';assets=@($names | ForEach-Object {@{name=$_;browser_download_url="https://github.com/80ROkWOC4j/discord-dccon/releases/download/v3.0.0/$_"}})}
-}
+function Invoke-RestMethod { throw 'Unexpected GitHub API request' }
 function Invoke-WebRequest {
   param([switch]$UseBasicParsing,$Uri,$Headers,$OutFile)
+  $base = if ($env:DCCON_EXPECT_VERSION) {"download/$($env:DCCON_EXPECT_VERSION)"} else {'latest/download'}
+  $name = ([uri]$Uri).Segments[-1]
+  if ($name -notin @('discord-dccon-standalone.zip','discord-dccon-betterdiscord.zip','checksums.json') -or
+      $Uri -ne "https://github.com/80ROkWOC4j/discord-dccon/releases/$base/$name") {throw 'Unexpected release download URL'}
+  if ($Missing) {throw 'Release file missing (404)'}
+
   $name = ([uri]$Uri).Segments[-1]
   Copy-Item -LiteralPath (Join-Path $env:DCCON_TEST_DIST $name) -Destination $OutFile
   if ($Corrupt -and $name.EndsWith('.zip')) {Add-Content -LiteralPath $OutFile -Value 'corrupt'}
