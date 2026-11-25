@@ -1,5 +1,7 @@
+import type {ChangeEvent} from 'react';
 import type {Platform} from '../../platform/types.ts';
-import type {Failure} from '../types.ts';
+import type {CloudflareCredentials, EmbeddingProvider, Failure} from '../types.ts';
+import {CLOUDFLARE_KEYS_NEEDED, CloudflareEmbeddingError} from '../embedding-cloudflare.ts';
 import type {PersonalState, CardProps, SavedCardProps, SettingsState} from '../ui-types.ts';
 import type {Packs} from '../packs.ts';
 import type {Sending} from '../sending.ts';
@@ -16,7 +18,8 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   packs: Packs;
   personal: Personal;
   sending: Pick<Sending, "inspectInstantSend">;
-  embedding: Pick<EmbeddingService, "enabled" | "status" | "toggle" | "start">;
+  embedding: Pick<EmbeddingService, 'enabled' | 'status' | 'toggle' | 'start' | 'provider' | 'setProvider' |
+    'hasCloudflareCredentials' | 'saveCloudflareCredentials' | 'testCloudflareCredentials'>;
   events: Events;
   media: MediaUI;
 }) {
@@ -186,27 +189,90 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
           h(Button, {text: getLocaleStrings().settings.remove, color: "dccon-item-error", disabled: props.disabled,
             onClick: props.onRemove, style: {marginLeft: "auto"}}))));
   }
-  class EmbeddingEnvironmentPanel extends platform.react.Component<Record<string, never>, {revision?: number}> {
-    declare refresh: () => void;
+  const emptyCredentials = (): CloudflareCredentials => ({accountId: '', apiToken: ''});
+  class EmbeddingEnvironmentPanel extends platform.react.Component<Record<string, never>,
+    {revision: number; draft: CloudflareCredentials; action: 'test' | 'save' | null; message: string}> {
+    controller?: AbortController;
 
-    constructor(props: Record<string, never>) { super(props); this.state = {}; this.refresh = () => this.setState({revision: (this.state.revision || 0) + 1}); }
-    componentDidMount() { PluginEvents.subscribe("DCCON_EMBEDDING_UPDATE", this.refresh); }
-    componentWillUnmount() { PluginEvents.unsubscribe("DCCON_EMBEDDING_UPDATE", this.refresh); }
+    constructor(props: Record<string, never>) {
+      super(props);
+      this.state = {revision: 0, draft: emptyCredentials(), action: null, message: ''};
+    }
+    refresh = () => {
+      const revision = this.state.revision + 1;
+      if (!Embedding.enabled() || Embedding.provider() !== 'cloudflare') {
+        this.controller?.abort(); this.controller = undefined;
+        this.setState({revision, draft: emptyCredentials(), action: null, message: ''});
+      } else this.setState({revision});
+    };
+    componentDidMount() {PluginEvents.subscribe('DCCON_EMBEDDING_UPDATE', this.refresh);}
+    componentWillUnmount() {
+      PluginEvents.unsubscribe('DCCON_EMBEDDING_UPDATE', this.refresh);
+      this.controller?.abort(); this.controller = undefined;
+    }
+    async apply(action: 'test' | 'save') {
+      if (this.controller) return;
+      const controller = this.controller = new AbortController();
+      this.setState({action, message: ''});
+      try {
+        if (action === 'test') await Embedding.testCloudflareCredentials(this.state.draft, controller.signal);
+        else await Embedding.saveCloudflareCredentials(this.state.draft);
+        if (this.controller !== controller) return;
+        if (action === 'save') this.setState({draft: emptyCredentials(), message: 'Cloudflare API 키를 저장했습니다.'});
+        else this.setState({message: 'Cloudflare Workers AI에 연결했습니다.'});
+      } catch (error) {
+        if (this.controller !== controller) return;
+        this.setState({message: error instanceof CloudflareEmbeddingError ? error.message : 'Cloudflare 요청을 완료하지 못했습니다.'});
+      } finally {
+        if (this.controller === controller) {this.controller = undefined; this.setState({action: null});}
+      }
+    }
+    renderCloudflare(enabled: boolean, saved: boolean) {
+      const h = platform.react.createElement;
+      const {draft, action, message} = this.state;
+      const disabled = !enabled || Boolean(action);
+      const field = (key: keyof CloudflareCredentials, label: string, type: string, autoComplete: string) =>
+        h('label', {className: 'dccon-embedding-field'}, label,
+          h('input', {type, autoComplete, autoCapitalize: 'none', spellCheck: false, disabled, value: draft[key],
+            placeholder: saved ? '저장됨 · 변경할 때만 입력' : undefined,
+            onChange: (event: ChangeEvent<HTMLInputElement>) => this.setState({draft: {...draft, [key]: event.currentTarget.value}, message: ''})}));
+      return h('div', {className: 'dccon-embedding-credentials'},
+        h('p', null, '이미지와 검색어를 Cloudflare Workers AI로 전송합니다. Workers AI Read/Edit 권한이 있는 API Token을 사용하세요.'),
+        field('accountId', 'Account ID', 'text', 'off'),
+        field('apiToken', 'API Token', 'password', 'new-password'),
+        h('div', {className: 'dccon-embedding-actions'},
+          h('button', {type: 'button', className: 'dccon-embedding-test', disabled, onClick: () => void this.apply('test')}, action === 'test' ? '연결 확인 중…' : '연결 테스트'),
+          h('button', {type: 'button', className: 'dccon-button',
+            disabled: disabled || (saved && !draft.accountId.trim() && !draft.apiToken.trim()),
+            onClick: () => void this.apply('save')}, action === 'save' ? '저장 중…' : '저장')),
+        h('p', {role: 'status'}, message),
+        h('p', null, !enabled ? '의미 기반 검색을 켜면 API 키를 입력할 수 있습니다. ' : '',
+          '의미 기반 검색을 끄거나 로컬로 바꾸면 저장된 API 키가 즉시 삭제됩니다.'));
+    }
     render() {
       const h = platform.react.createElement;
+      const enabled = Embedding.enabled(), provider = Embedding.provider(), cloudflare = provider === 'cloudflare';
+      const saved = cloudflare && Embedding.hasCloudflareCredentials(), waiting = cloudflare && !saved;
       return h("section", {className: "dccon-embedding-environment"},
         h("div", {className: "dccon-setting-row"},
           h("h3", null, "의미 기반 검색"),
           h("button", {type: "button", role: "switch", className: "dccon-switch", "aria-label": "의미 기반 검색",
-            "aria-checked": Embedding.enabled(), onClick: () => Embedding.toggle(!Embedding.enabled())},
+            "aria-checked": enabled, onClick: () => Embedding.toggle(!enabled)},
             h("span", {"aria-hidden": true}))),
         h("p", null, "디시콘을 감정이나 상황으로 검색합니다."),
-        h("p", null, "활성화하면 EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 다운로드하고 WebGPU로 이미지를 분석합니다."),
-        Embedding.enabled() && h("div", {className: "dccon-embedding-progress"},
-          h("p", {role: "status"}, `${Embedding.status.phase} ${Embedding.status.file || ""} · ${Embedding.status.completed}/${Embedding.status.total} · 실패 ${Embedding.status.errors}`),
-          h("progress", {"aria-label": "디시콘 색인 진행률", max: Math.max(1, Embedding.status.total), value: ["이미지 색인", "준비 완료", "완료 · 일부 실패", "오류", "꺼짐"].includes(Embedding.status.phase) ? Embedding.status.completed : undefined}),
-          Embedding.status.error && h("p", {role: "alert"}, Embedding.status.error),
-          ["오류", "꺼짐", "완료 · 일부 실패"].includes(Embedding.status.phase) && h(Button, {text: "다시 시도", onClick: () => Embedding.start()})));
+        h('label', {className: 'dccon-embedding-field dccon-embedding-provider'}, '검색 방식',
+          h('select', {value: provider, onChange: (event: ChangeEvent<HTMLSelectElement>) =>
+            Embedding.setProvider(event.currentTarget.value as EmbeddingProvider)},
+            h('option', {value: 'local'}, '로컬 (WebGPU)'),
+            h('option', {value: 'cloudflare'}, 'Cloudflare Workers AI (BYOK)'))),
+        cloudflare ? this.renderCloudflare(enabled, saved) :
+          h("p", null, "활성화하면 EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 다운로드하고 WebGPU로 이미지를 분석합니다."),
+        enabled && (waiting ? h('p', {role: 'status', className: 'dccon-embedding-waiting'}, CLOUDFLARE_KEYS_NEEDED) :
+          h("div", {className: "dccon-embedding-progress"},
+            h("p", {role: "status"}, `${Embedding.status.phase} ${Embedding.status.file || ""} · ${Embedding.status.completed}/${Embedding.status.total} · 실패 ${Embedding.status.errors}`),
+            h("progress", {"aria-label": "디시콘 색인 진행률", max: Math.max(1, Embedding.status.total), value: ["이미지 색인", "준비 완료", "완료 · 일부 실패", "오류", "꺼짐"].includes(Embedding.status.phase) ? Embedding.status.completed : undefined}),
+            Embedding.status.error && h("p", {role: "alert"}, Embedding.status.error),
+            ["오류", "꺼짐", "완료 · 일부 실패"].includes(Embedding.status.phase) && h(Button, {text: "다시 시도", onClick: () => Embedding.start()}))));
     }
   }
 

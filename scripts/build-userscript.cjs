@@ -30,6 +30,7 @@ async function main() {
 // @connect ac.arca.live
 // @connect cdn.jsdelivr.net
 // @connect api.github.com
+// @connect api.cloudflare.com
 // @connect huggingface.co
 // @connect hf.co
 // @connect xethub.hf.co

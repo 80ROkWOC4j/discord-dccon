@@ -2,9 +2,12 @@ export type PackId = string | number;
 export interface Con {idx: PackId; title: string; ext: string; path: string; packageIdx?: PackId}
 export interface Pack {info: {package_idx: PackId; title: string; main_img_path?: string; list_img_path?: string}; detail: Con[]}
 export interface PackSearchResult {idx: string; thumbId: string; name: string; seller: string}
+export type EmbeddingProvider = 'local' | 'cloudflare';
+export interface CloudflareCredentials {accountId: string; apiToken: string}
 export interface Settings {
   dccons: Pack[]; dcconsBeforeDedup: Pack[]; favorites: Con[]; recent: Con[];
   personalCons: Con[]; collapsedPacks: Record<string, boolean>; embeddingEnabled: boolean;
+  embeddingProvider: EmbeddingProvider; embeddingCloudflareCredentials?: CloudflareCredentials;
 }
 export interface QueueEntry {con: Con; file: File}
 export interface PreparedCon {con: Con; file: File}

@@ -1,3 +1,10 @@
+export function forgetInactiveEmbeddingCredentials(settings: Record<string, unknown>) {
+  if (settings.embeddingEnabled === true && settings.embeddingProvider === 'cloudflare') return false;
+  if (!Object.hasOwn(settings, 'embeddingCloudflareCredentials')) return false;
+  delete settings.embeddingCloudflareCredentials;
+  return true;
+}
+
 type ListItem = {info?: {package_idx: string | number}; path?: string; ext?: string};
 const listKeys = new Set(['dccons', 'favorites', 'recent', 'personalCons']);
 function itemKey(key: string, item: ListItem) {

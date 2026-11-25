@@ -7,6 +7,7 @@ import type {Packs} from '../packs.ts';
 import type {Images} from '../images.ts';
 import type {Sending} from '../sending.ts';
 import type {EmbeddingService} from '../services.ts';
+import {CLOUDFLARE_KEYS_NEEDED, CLOUDFLARE_SETUP_HINT} from '../embedding-cloudflare.ts';
 import type {Events} from '../events.ts';
 import type {MediaUI} from './media.ts';
 import {getLocaleStrings as stringsFor} from '../strings.ts';
@@ -282,7 +283,9 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       this.embeddingRefresh = () => {
         this.refresh();
         const phase = Embedding.status.phase;
-        if (!Embedding.enabled() || (phase !== this.embeddingPhase && ["이미지 색인", "준비 완료", "완료 · 일부 실패"].includes(phase))) this.changeSearch(this.state.textFilter);
+        if (!Embedding.enabled() || (phase !== this.embeddingPhase &&
+          ['꺼짐', CLOUDFLARE_KEYS_NEEDED, '이미지 색인', '준비 완료', '완료 · 일부 실패', '오류'].includes(phase)))
+          this.changeSearch(this.state.textFilter);
         this.embeddingPhase = phase;
       };
     }
@@ -309,8 +312,9 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       Embedding.cancelSearch();
       const generation = this.searchGeneration = (this.searchGeneration || 0) + 1;
       const semantic = Embedding.enabled() && text.trim();
-      this.setState({textFilter: text, semanticResults: [], searchError: "", searching: Boolean(semantic)});
-      if (!semantic) return;
+      const needsKeys = Boolean(semantic) && Embedding.status.phase === CLOUDFLARE_KEYS_NEEDED;
+      this.setState({textFilter: text, semanticResults: [], searchError: needsKeys ? CLOUDFLARE_SETUP_HINT : '', searching: Boolean(semantic) && !needsKeys});
+      if (!semantic || needsKeys) return;
       this.searchTimer = setTimeout(async () => {
         try {
           const semanticResults = await Embedding.search(text.trim());

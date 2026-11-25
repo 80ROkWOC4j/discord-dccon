@@ -18,6 +18,22 @@ async function write(file, value) {await fs.mkdir(path.dirname(file), {recursive
 async function state(root) {try {return JSON.parse(await fs.readFile(path.join(root, 'config.json'), 'utf8'));} catch (e) {if (e.code === 'ENOENT') return null; throw e;}}
 async function missing(file) {await assert.rejects(fs.access(file), {code: 'ENOENT'});}
 
+test('config creation and atomic updates use private temporary files', {skip: process.platform === 'win32'}, async t => {
+  const options = await fixture(t), config = path.join(options.root, 'config.json'), modes = [];
+  const backend = {...fs, async rename(source, target) {
+    if (target === config) modes.push((await fs.stat(source)).mode & 0o777);
+    return fs.rename(source, target);
+  }};
+  const store = createConfigStore({...options, fs: backend});
+  await store.open();
+  assert.equal((await fs.stat(config)).mode & 0o777, 0o600);
+  await fs.chmod(config, 0o644);
+  await store.save('embeddingEnabled', true, undefined);
+  assert.equal((await fs.stat(config)).mode & 0o777, 0o600);
+  assert.ok(modes.length >= 2);
+  assert.ok(modes.every(mode => mode === 0o600));
+});
+
 test('missing configuration imports legacy JSON and IndexedDB, merging lists and preferring current options', async t => {
   const options = await fixture(t), legacy = path.join(path.dirname(options.root), 'BetterDiscord', 'plugins', 'discord-dccon.config.json');
   const old = {embeddingEnabled: true, favorites: [con('bd')], dccons: [{info: {package_idx: 1}, detail: [con('a')]}]};

@@ -20,6 +20,7 @@ export function createUserscriptPlatform({page, request, load}: {
   const settings = createConfig(page.indexedDB);
   const config: Configuration = {
     open: () => settings.config('open', [initialData]),
+    read: () => settings.config('read', []),
     save: (...args) => settings.config('save', args),
   };
   const composer = createComposerBridge(page, document) as Composer & {dispose(): void};

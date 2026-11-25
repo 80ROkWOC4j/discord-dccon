@@ -210,7 +210,27 @@ cache/
 
 ## 의미 기반 검색
 
-설정에서 의미 기반 검색을 키면 임베딩모델을 다운받고 디시콘들 임베딩 합니다. 기존의 검색은 벡터 검색으로 바뀝니다.
+설정에서 의미 기반 검색을 켜면 디시콘을 표정이나 상황으로 검색할 수 있습니다. 기존 검색창이 벡터 검색으로 전환됩니다.
+
+**설정 → 의미 기반 검색**에서 아래 두 가지 방식 중 하나를 선택할 수 있습니다.
+
+- **로컬 (WebGPU)**: EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 로컬에 다운로드해 브라우저 WebGPU로 분석합니다.
+- **Cloudflare Workers AI (BYOK)**: 본인의 Cloudflare 계정(**Account ID**, **API Token**)으로 `@cf/google/embeddinggemma-2` API를 호출합니다. 모델 다운로드와 WebGPU가 필요 없어 모바일 브라우저(유저스크립트)나 저사양 환경에서도 사용할 수 있으며, Cloudflare 무료 티어 기준 하루 10,000 Neurons가 제공됩니다.
+
+### Cloudflare API 키 발급 및 설정 (BYOK)
+
+1. [Cloudflare 대시보드](https://dash.cloudflare.com)에서 **AI → Workers AI → Use REST API**로 이동합니다.
+2. 화면에 표시된 **Account ID**(32자리)를 복사합니다.
+3. **Create a Workers AI API Token**으로 토큰을 생성합니다. (수동으로 커스텀 토큰을 만들 경우 **Account → Workers AI → Read / Edit** 권한만 부여하세요.)
+4. Discord의 **설정 → 의미 기반 검색**에서 방식을 **Cloudflare Workers AI (BYOK)**로 선택하고 Account ID와 API Token을 입력한 뒤 연결 테스트 및 저장합니다.
+
+### API 키 저장 위치 및 보안 안내
+
+- 입력한 Account ID와 API Token은 기존 설정 저장소에 보관됩니다.
+  - 데스크톱(BetterDiscord / Shelter / Standalone): 공통 `config.json`
+  - 웹·모바일 유저스크립트: `discord.com` 오리진의 브라우저 **IndexedDB**
+- 특히 유저스크립트 환경에서는 같은 페이지 컨텍스트의 스크립트가 IndexedDB에 접근할 수 있으므로, **Global API Key는 절대 사용하지 말고 Workers AI 권한만 부여한 최소 권한 전용 토큰**을 사용해 주세요.
+- **의미 기반 검색을 비활성화하거나 로컬 방식으로 전환하면 저장된 Account ID와 API Token은 즉시 삭제됩니다.**
 
 <img src="images/cry.png" alt="슬픔" width="520">
 <img src="images/angry.png" alt="angry" width="520">

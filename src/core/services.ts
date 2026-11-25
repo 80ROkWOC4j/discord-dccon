@@ -1,12 +1,12 @@
 import type {Configuration, ConfigurationSnapshot} from '../platform/types.ts';
-import type {Con, Settings, FileSystem, SearchResult} from './types.ts';
+import type {CloudflareCredentials, Con, EmbeddingProvider, Settings, FileSystem, SearchResult} from './types.ts';
 export type Binary = Uint8Array<ArrayBuffer>;
 export type VectorMap = Record<string, number[]>;
 export interface PendingSetting {key: keyof Settings; value: Settings[keyof Settings]; before: Settings[keyof Settings] | undefined}
 export interface SharedConfiguration {
   data: Partial<Settings> | null; backend: Configuration | null; pending: PendingSetting[]; work: Promise<unknown>;
   open(): Promise<void>;
-  call(method: 'open'): Promise<ConfigurationSnapshot>;
+  call(method: 'open' | 'read'): Promise<ConfigurationSnapshot>;
   call(method: 'save', key: string, value: unknown, before: unknown): Promise<ConfigurationSnapshot>;
   save<K extends keyof Settings>(key: K, value: Settings[K]): Promise<void>;
 }
@@ -36,7 +36,10 @@ export interface EmbeddingService {
   searchSequence: number; searchWork: Promise<unknown>; pendingVectorKeys: Set<string>;
   status: EmbeddingStatus; startTimer?: ReturnType<typeof setTimeout> | null;
   starting?: boolean; ready?: boolean; indexing?: boolean; reindex?: boolean;
-  enabled(): boolean; key(con: Con): string; update(changes: Partial<EmbeddingStatus>): void;
+  enabled(): boolean; provider(): EmbeddingProvider; setProvider(provider: EmbeddingProvider): void;
+  hasCloudflareCredentials(): boolean; saveCloudflareCredentials(draft: CloudflareCredentials): Promise<void>;
+  testCloudflareCredentials(draft: CloudflareCredentials, signal?: AbortSignal): Promise<void>;
+  key(con: Con): string; update(changes: Partial<EmbeddingStatus>): void;
   files(): FileSystem; directory(): string; vectorDirectory(): string; vectorFile(key: string): string;
   download(url: string, generation: number): Promise<import('../platform/types.ts').DownloadResponse>;
   asset(url: string, generation: number, expectedHash?: string): Promise<ArrayBuffer>;
