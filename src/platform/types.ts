@@ -14,6 +14,9 @@ export type ConfigurationResult = ConfigurationSnapshot | {
 };
 export interface Configuration {
   open(): Promise<ConfigurationResult>;
+  read?(): Promise<ConfigurationResult>;
+  // Desktop profiles can share files without sharing a renderer BroadcastChannel.
+  pollForChanges?: boolean;
   save(key: string, value: unknown, before: unknown): Promise<ConfigurationResult>;
 }
 export interface DownloadOptions {

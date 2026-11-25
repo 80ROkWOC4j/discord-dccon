@@ -7,7 +7,7 @@ export interface FileInfo {
 export interface StorageFilesystem {
   readFile(file: string, encoding: 'utf8'): Promise<string>;
   readFile(file: string, encoding: null): Promise<Uint8Array>;
-  writeFile(file: string, value: string | Uint8Array): Promise<unknown>;
+  writeFile(file: string, value: string | Uint8Array, options?: {mode?: number; flag?: string}): Promise<unknown>;
   mkdir(file: string, options: {recursive: boolean}): Promise<unknown>;
   rmdir(file: string): Promise<unknown>;
   readdir(file: string): Promise<string[]>;
@@ -44,5 +44,6 @@ export interface MigrationContext {
 export type Migrations = Record<number, (context: MigrationContext) => Promise<void>>;
 export interface ConfigStore {
   open(preferred?: Settings): Promise<Configuration>;
+  read(): Promise<Configuration>;
   save(key: string, value: unknown, before: unknown): Promise<Configuration>;
 }

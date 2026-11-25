@@ -154,6 +154,23 @@
 .dccon-settings-panel .dccon-switch[aria-checked="true"] { background: var(--dc-accent); }
 .dccon-switch[aria-checked="true"] span { transform: translateX(20px); }
 @media (prefers-reduced-motion: reduce) { .dccon-settings-panel .dccon-switch, .dccon-switch span { transition: none; } }
+.dccon-embedding-field { display: grid; gap: 5px; min-width: 0; font-weight: 600; }
+.dccon-embedding-provider { max-width: 320px; }
+.dccon-embedding-field :is(input, select) { width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border-subtle, #80808055); border-radius: 6px; background: var(--dc-inset); color: var(--dc-text); font: inherit; font-weight: 400; }
+.dccon-embedding-field :is(input, select):focus-visible { outline: 2px solid var(--dc-accent); outline-offset: -1px; }
+.dccon-embedding-field input::placeholder { color: var(--dc-muted); }
+.dccon-embedding-credentials { display: grid; gap: 10px; min-width: 0; margin-top: 12px; padding: 12px; border-radius: 8px; border: 1px solid var(--border-subtle, #80808055); }
+.dccon-embedding-credentials p { margin: 0; }
+.dccon-embedding-credentials p:empty { display: none; }
+.dccon-embedding-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dccon-settings-panel .dccon-embedding-test { padding: 7px 12px; border-radius: 4px; background: var(--dc-inset); border: 1px solid var(--border-subtle, #80808055); }
+.dccon-settings-panel .dccon-embedding-test:hover:not(:disabled) { background: var(--dc-hover); }
+.dccon-embedding-environment .dccon-embedding-waiting { color: var(--dc-text); font-weight: 600; }
+@media (any-pointer: coarse) {
+  .dccon-settings-panel .dccon-embedding-field :is(input, select) { font-size: 16px; }
+  .dccon-embedding-field :is(input, select), .dccon-embedding-actions button { min-height: 40px; }
+}
+.dccon-settings-panel .dccon-embedding-environment .dccon-switch { height: 32px; border-radius: 16px; }
 .dccon-embedding-progress progress { width: 100%; height: 10px; accent-color: var(--dc-accent); }
 .dccon-report-steps { padding-left: 20px; color: var(--dc-muted); line-height: 1.7; margin: 0 0 12px; }
 .dccon-diagnostics p { color: var(--dc-muted); margin: 0 0 12px; }

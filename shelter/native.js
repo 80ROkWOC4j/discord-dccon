@@ -57,7 +57,7 @@ function allowedDownload(value) {
   const url = new URL(value);
   const hosts = ['dcinside.com', 'huggingface.co', 'hf.co', 'xethub.hf.co', 'cdn.jsdelivr.net', 'ac.arca.live'];
   if (url.protocol !== 'https:' || url.username || url.password ||
-      !(url.hostname === 'api.github.com' || hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host)))) throw Error('Unsupported download host');
+      !(url.hostname === 'api.github.com' || url.hostname === 'api.cloudflare.com' || hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host)))) throw Error('Unsupported download host');
   return url.href;
 }
 // net.fetch rejects manual redirects in Electron instead of returning the 3xx response.
@@ -82,7 +82,7 @@ function download(net, input, options = {}, signal) {
     request.on('redirect', (status, nextMethod, target, responseHeaders) => {
       try {
         url = allowedDownload(new URL(target, url).href);
-        if (options.redirect === 'manual') {
+        if (options.redirect === 'manual' || Object.keys(options.headers || {}).some(name => name.toLowerCase() === 'authorization')) {
           finish(null, {status, headers: headers(responseHeaders), bytes: new Uint8Array()});
           request.abort();
         } else {

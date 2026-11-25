@@ -1,4 +1,4 @@
-import {mergeSetting} from './merge.ts';
+import {forgetInactiveEmbeddingCredentials, mergeSetting} from './merge.ts';
 import type {Configuration, Settings} from './types.ts';
 
 // IndexedDB serializes read/write transactions across tabs. Merge only the
@@ -18,25 +18,28 @@ export function createConfig(indexedDB: IDBFactory) {
       };
     });
   }
-  async function config(method: 'open' | 'save', args: unknown[]): Promise<Configuration> {
-    if (!['open', 'save'].includes(method)) throw Error('Unsupported settings operation');
+  async function config(method: 'open' | 'read' | 'save', args: unknown[]): Promise<Configuration> {
+    if (!['open', 'read', 'save'].includes(method)) throw Error('Unsupported settings operation');
     if (method === 'save' && (typeof args[0] !== 'string' || ['__proto__','constructor','prototype'].includes(args[0]))) throw Error('Invalid setting key');
     const db = await database();
     return new Promise<Configuration>((resolve, reject) => {
-      const tx = db.transaction('config', 'readwrite'), store = tx.objectStore('config');
+      const tx = db.transaction('config', method === 'read' ? 'readonly' : 'readwrite'), store = tx.objectStore('config');
       let result: Configuration, failure: unknown;
       tx.oncomplete = () => resolve(result);
       tx.onerror = tx.onabort = () => reject(failure || tx.error || Error('Settings transaction failed'));
       const read = store.get('current');
       read.onsuccess = () => {
         try {
+          if (method === 'read' && !read.result) throw Error('Shared configuration has not been initialized');
           result = read.result || {version:1, settings:structuredClone(method === 'open' ? args[0] as Settings || {} : {})};
           if (result.version !== 1) throw Error('Unsupported settings version');
           if (method === 'save') {
             const [key, value, before] = args as [string, unknown, unknown];
             result.settings[key] = mergeSetting(key, before, value, result.settings[key]);
           }
-          if (!read.result || method === 'save') store.put(result, 'current');
+          // Delete in the same transaction as the provider/enable change.
+          const removedCredentials = forgetInactiveEmbeddingCredentials(result.settings);
+          if (method !== 'read' && (!read.result || method === 'save' || removedCredentials)) store.put(result, 'current');
         } catch (error) {failure = error; tx.abort();}
       };
     });

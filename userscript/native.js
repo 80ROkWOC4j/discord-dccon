@@ -10,7 +10,7 @@ function createUserscriptNative(gmRequest, environment = globalThis) {
     const url = new URL(input);
     const hosts = ['dcinside.com', 'ac.arca.live', 'cdn.jsdelivr.net', 'huggingface.co', 'hf.co', 'xethub.hf.co'];
     if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-        !(url.hostname === 'api.github.com' || hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host)))) throw Error('Unsupported download host');
+        !(url.hostname === 'api.github.com' || url.hostname === 'api.cloudflare.com' || hosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host)))) throw Error('Unsupported download host');
     return url;
   }
   const native = {
@@ -30,8 +30,12 @@ function createUserscriptNative(gmRequest, environment = globalThis) {
         const method = options.method || 'GET';
         if (!['GET', 'POST'].includes(method)) throw Error('Unsupported download method');
         const headers = {};
-        for (const [key, value] of Object.entries(options.headers || {}))
-          if (['accept', 'content-type', 'x-requested-with', 'referer'].includes(key.toLowerCase())) headers[key] = value;
+        for (const [key, value] of Object.entries(options.headers || {})) {
+          const name = key.toLowerCase();
+          if (['accept', 'content-type', 'x-requested-with', 'referer'].includes(name) ||
+              (name === 'authorization' && url.hostname === 'api.cloudflare.com')) headers[key] = value;
+        }
+        const hasAuthorization = Object.keys(headers).some(name => name.toLowerCase() === 'authorization');
         let finished = false;
         const finish = (error, value) => {
           if (finished) return;
@@ -39,10 +43,12 @@ function createUserscriptNative(gmRequest, environment = globalThis) {
           error ? reject(error) : resolve(value);
         };
         const control = gmRequest({url: url.href, method, headers, data: options.body,
+          ...(hasAuthorization ? {redirect: 'manual'} : {}),
           responseType: 'arraybuffer', anonymous: true, timeout: 120000,
           onload(response) {
             try {
-              allowed(response.finalUrl || url.href);
+              const finalUrl = allowed(response.finalUrl || url.href);
+              if (hasAuthorization && finalUrl.hostname !== 'api.cloudflare.com') throw Error('Unsupported redirect host');
               const headers = response.responseHeaders.trim().split(/[\r\n]+/).flatMap(line => {
                 const index = line.indexOf(':');
                 const name = line.slice(0, index).trim().toLowerCase();

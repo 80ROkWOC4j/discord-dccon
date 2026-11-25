@@ -28,9 +28,15 @@ export function createServices(platform: Platform, assets: Pick<PluginAssets, 's
   const embedding = createEmbedding(platform, settings, cache, packs, images, events);
   let unsubscribe: (() => void) | undefined;
   function connect() {
-    unsubscribe ??= settings.subscribe(key => {
+    if (unsubscribe) return;
+    const unsubscribeSettings = settings.subscribe(key => {
       if ((key === 'dccons' || key === 'personalCons') && embedding.enabled()) void embedding.index();
     });
+    const unsubscribeEmbeddingSync = settings.watchEmbeddingSettings(() => {
+      embedding.stop();
+      embedding.start();
+    });
+    unsubscribe = () => {unsubscribeSettings(); unsubscribeEmbeddingSync();};
   }
   function disconnect() {unsubscribe?.(); unsubscribe = undefined;}
   connect();
@@ -81,10 +87,11 @@ export function createPluginClass(platform: Platform, assets: PluginAssets, serv
       if (!platform.config && !platform.cacheAvailable()) return this.startReady();
       this.startPromise = (async () => {
         try {await settings.open();}
-        catch (_error) { const error = _error as Failure;
-          this.startError = error;
-          platform.logger.error("discord-dccon", "Configuration migration failed", error);
-          platform.ui.showToast("설정 이전 실패: " + error.message + " · 다음 시작에 재시도합니다.", {type: "error", timeout: 10000});
+        catch {
+          this.startError = Error("공통 설정을 열지 못했습니다.");
+          // Parse/storage failures can quote the config (including BYOK credentials).
+          platform.logger.error("discord-dccon", "Configuration migration failed");
+          platform.ui.showToast("설정 이전 실패 · 다음 시작에 재시도합니다.", {type: "error", timeout: 10000});
           return;
         }
         if (generation === this.startGeneration) this.startReady();

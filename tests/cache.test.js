@@ -109,6 +109,7 @@ test("cancelled model saves clean up the complete temporary file", async t => {
 
 test("rapid shared setting saves keep newer optimistic edits and do not update the legacy store", async t => {
   const {root, cache} = fixture(t), legacy = {favorites: []}, h = runtime(root, cache, legacy);
+  t.after(() => h.services.disconnect());
   const {createConfigStore} = require('../src/storage/node.ts');
   const store = createConfigStore({root, vectorSpec: 'q8-image560-video6x280-v2'});
   let entered, finish;
@@ -132,24 +133,32 @@ test("rapid shared setting saves keep newer optimistic edits and do not update t
 test("BetterDiscord callback filesystem initializes and saves the shared JSON with bridge-style errors", async t => {
   const {root, cache} = fixture(t), plugins = path.join(root, 'plugins'), legacy = {favorites: [{path:'bd',ext:'png'}]};
   fs.mkdirSync(plugins); fs.writeFileSync(path.join(plugins, 'discord-dccon.config.json'), JSON.stringify(legacy));
-  const callbackFS = {};
+  const callbackFS = {}, configModes = [];
   for (const method of ['mkdir','rmdir','readdir','lstat','stat','realpath','readFile','writeFile','rename','unlink']) callbackFS[method] = (...args) => {
     const callback = args.pop();
+    if (method === 'rename' && args[1] === path.join(root, 'config.json') && process.platform !== 'win32')
+      configModes.push(fs.statSync(args[0]).mode & 0o777);
     fs[method === 'lstat' ? 'stat' : method](...args, (error, value) => callback(error ? Error(error.message) : null, value));
   };
   callbackFS.realpathSync = fs.realpathSync;
   const h = runtime(plugins, cache, legacy, {require: name => name === 'fs' ? callbackFS : require(name)});
+  t.after(() => h.services.disconnect());
   await h.SharedConfig.open(); await h.saveData('embeddingEnabled', false);
   const config = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
   assert.equal(config.version, 2); assert.equal(config.settings.embeddingEnabled, false);
+  if (process.platform !== 'win32') {
+    assert.ok(configModes.length >= 2); assert.ok(configModes.every(mode => mode === 0o600));
+    assert.equal(fs.statSync(path.join(root, 'config.json')).mode & 0o777, 0o600);
+  }
   assert.deepEqual(config.settings.favorites, legacy.favorites);
   assert.equal(legacy.embeddingEnabled, undefined);
 });
 test("native cache mount is shared while saved images remain isolated and traversal is rejected", async (t) => {
   const { root, cache } = fixture(t), a = createFiles(path.join(root, "stable"), void 0, cache), b = createFiles(path.join(root, "canary"), void 0, cache);
   await a("mkdir", ["/cache/images", { recursive: true }]);
-  await a("writeFile", ["/cache/images/hash", Buffer.from("shared")]);
+  await a("writeFile", ["/cache/images/hash", Buffer.from("shared"), {mode: 0o600}]);
   assert.equal((await b("readFile", ["/cache/images/hash", null])).toString(), "shared");
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(cache, 'images/hash')).mode & 0o077, 0);
   await assert.rejects(a("writeFile", ["/cache/../../escape", Buffer.from("x")]), /escapes/);
   await assert.rejects(a("unlink", ["/cache/images/hash"]), /Invalid personal/);
   await assert.rejects(b("readFile", ["/dccon/saved", null]), { code: "ENOENT" });

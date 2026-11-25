@@ -67,8 +67,9 @@ export function createBetterDiscordPlatform(api: BetterDiscord, nativeRequire: N
       const store = createConfigStore({fs: fs as unknown as StorageFilesystem, root: paths.dataRoot(), vectorSpec,
         legacyPluginsRoot: api.Plugins.folder, pid: runtime.pid}, environment);
       return {open: () => store.open(Object.fromEntries(
-        ['dccons', 'favorites', 'recent', 'personalCons', 'collapsedPacks', 'embeddingEnabled', 'dcconsBeforeDedup']
+        ['dccons', 'favorites', 'recent', 'personalCons', 'collapsedPacks', 'embeddingEnabled', 'embeddingProvider', 'dcconsBeforeDedup']
           .map(key => [key, api.Data.load('discord-dccon', key)]).filter(([, value]) => value !== undefined))),
+        read: () => store.read(), pollForChanges: true,
         save: (...args) => store.save(...args)};
     },
     data: {load: key => api.Data.load('discord-dccon', key), save: (key, value) => api.Data.save('discord-dccon', key, value)},

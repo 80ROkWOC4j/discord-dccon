@@ -46,7 +46,7 @@ ipcMain.on('dccon:abort', (event, id) => {
 });
 ipcMain.handle('dccon:config', async (event, method, args) => {
   trusted(event);
-  if (!['open', 'save'].includes(method)) throw Error('Invalid configuration operation');
+  if (!['open', 'read', 'save'].includes(method)) throw Error('Invalid configuration operation');
   try {return await configStore[method](...args);}
   catch (error) {return {error: {message: error.message, code: error.code}};}
 });

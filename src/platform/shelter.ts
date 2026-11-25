@@ -37,6 +37,7 @@ export function createShelterPlatform(shelter: ShelterHost, native: NativeBridge
   };
   const config = {
     open: () => native.config('open', [clone(store.dcconData || {})]),
+    read: () => native.config('read', []), pollForChanges: true,
     save: (key: string, value: unknown, before: unknown) => native.config('save', [key, value, before]),
   };
   const platform: Platform = {

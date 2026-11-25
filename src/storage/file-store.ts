@@ -1,11 +1,11 @@
-import {mergeSetting} from './merge.ts';
+import {forgetInactiveEmbeddingCredentials, mergeSetting} from './merge.ts';
 import type {Settings, Configuration, StorageFilesystem, StorageEnvironment, StoreOptions, MigrationContext, Migrations, ConfigStore} from './types.ts';
 
 function validVector(vector: unknown): vector is number[] {
   return Array.isArray(vector) && vector.length === 768 && vector.every(Number.isFinite) &&
     Math.abs(Math.hypot(...vector) - 1) < 0.001;
 }
-async function readConfig(ctx: MigrationContext) {
+async function readConfig(ctx: Pick<MigrationContext, 'fs' | 'root' | 'path'>) {
   const {fs, root, path} = ctx;
   let text;
   try {text = await fs.readFile(path.join(root, 'config.json'), 'utf8');}
@@ -19,11 +19,18 @@ async function atomicJSON(ctx: MigrationContext, file: string, value: unknown) {
   const {path} = ctx;
   await ctx.fs.mkdir(path.dirname(file), {recursive: true});
   const temporary = file + '.tmp-' + ctx.token + '-' + ++ctx.sequence;
+  const isConfig = file === path.join(ctx.root, 'config.json');
+  let written = false;
   try {
-    await ctx.fs.writeFile(temporary, JSON.stringify(value));
+    // Restrict the temporary inode before writing, not after the atomic rename.
+    if (isConfig) await ctx.fs.writeFile(temporary, JSON.stringify(value), {mode: 0o600, flag: 'wx'});
+    else await ctx.fs.writeFile(temporary, JSON.stringify(value));
+    written = true;
     await rename(ctx.fs, temporary, file);
   } catch (_error) { const error = _error as NodeJS.ErrnoException;
-    try {await ctx.fs.unlink(temporary);} catch { /* Keep the previously committed state. */ }
+    if (written || !isConfig || error.code !== 'EEXIST') {
+      try {await ctx.fs.unlink(temporary);} catch { /* Keep the previously committed state. */ }
+    }
     throw error;
   }
 }
@@ -188,13 +195,16 @@ async function importSettings(ctx: MigrationContext, preferred: Settings) {
     catch (_error) { const error = _error as NodeJS.ErrnoException;if (error.code === 'ENOENT') continue; throw error;}
     const value = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Invalid legacy settings');
+    // Legacy snapshots must never create a second copy of BYOK credentials.
+    delete value.embeddingCloudflareCredentials;
     await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', digest(source) + '.json'), value);
     for (const [key, item] of Object.entries(value)) settings[key] = mergeSetting(key, undefined, item, settings[key]);
   }
-  for (const [key, item] of Object.entries(preferred)) settings[key] = mergeSetting(key, undefined, item, settings[key]);
-  // Keep an independent backup of the imported IndexedDB/BD snapshot.
-  if (Object.keys(preferred).length)
-    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', 'imported-' + digest(JSON.stringify(preferred)) + '.json'), preferred);
+  const {embeddingCloudflareCredentials: _credentials, ...importable} = preferred;
+  for (const [key, item] of Object.entries(importable)) settings[key] = mergeSetting(key, undefined, item, settings[key]);
+  // Keep an independent backup of the non-secret imported settings.
+  if (Object.keys(importable).length)
+    await atomicJSON(ctx, path.join(ctx.root, 'migration-backup', 'settings', 'imported-' + digest(JSON.stringify(importable)) + '.json'), importable);
   return settings;
 }
 async function migrateLibrary(ctx: MigrationContext) {
@@ -319,6 +329,7 @@ export function createConfigStore(options: StoreOptions, environment: StorageEnv
         await atomicJSON(ctx, path.join(root, 'config.json'), config);
       }
       checkVersion(config, latest);
+      if (forgetInactiveEmbeddingCredentials(config.settings)) await atomicJSON(ctx, path.join(root, 'config.json'), config);
       while (config.version < latest) {
         const next = config.version + 1;
         if (typeof migrations[next] !== 'function') throw Error('Missing configuration migration v' + next);
@@ -328,6 +339,15 @@ export function createConfigStore(options: StoreOptions, environment: StorageEnv
       }
       return config;
     });},
+    async read() {
+      // Atomic replacement guarantees readers see a complete snapshot without taking the write lock.
+      const config = await readConfig({fs, root, path});
+      if (!config) throw Error('Shared configuration has not been initialized');
+      checkVersion(config, latest);
+      if (config.version !== latest) throw Error('Shared configuration needs migration');
+      forgetInactiveEmbeddingCredentials(config.settings);
+      return config;
+    },
     save(key, value, before) {return locked(async ctx => {
       const config = await readConfig(ctx);
       if (!config) throw Error('Shared configuration has not been initialized');
@@ -335,6 +355,7 @@ export function createConfigStore(options: StoreOptions, environment: StorageEnv
       if (config.version !== latest) throw Error('Shared configuration needs migration');
       if (['__proto__', 'constructor', 'prototype'].includes(key)) throw Error('Invalid setting key');
       config.settings[key] = mergeSetting(key, before, value, config.settings[key]);
+      forgetInactiveEmbeddingCredentials(config.settings);
       await atomicJSON(ctx, path.join(root, 'config.json'), config);
       return config;
     });}
