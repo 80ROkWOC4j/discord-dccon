@@ -171,6 +171,36 @@ exec /bin/${command} "$@"
  env.DCCON_OFFLINE='1';run(['--remove']);
  await assert.rejects(fs.access(path.join(plugins,'discord-dccon.plugin.js')));
  assert.equal(await fs.readFile(path.join(plugins,'discord-dccon.config.json'),'utf8'),'keep');
+ delete env.DCCON_OFFLINE;
+
+ const support=path.join(data,'discord'),launcher=path.join(apps,'Discord.app');
+ const active=path.join(support,'app-0.0.415'),host=path.join(active,'Discord.app');
+ const state=path.join(support,'install-state/app.toml');
+ await fs.rename(launcher,host);
+ await put(path.join(launcher,'Contents/Resources/launcher.conf'),'channel = "stable"\n');
+ await put(path.join(cores.Stable,'index.js'),original);
+ const newer=path.join(support,'app-0.0.499');
+ await fs.cp(host,path.join(newer,'Discord.app'),{recursive:true});
+ await put(path.join(newer,'Discord.app/Contents/Resources/build_info.json'),'{"version":"0.0.499"}');
+ const newerCore=path.join(newer,'modules/discord_desktop_core-1/discord_desktop_core');
+ await put(path.join(newerCore,'index.js'),original);
+ await put(path.join(newerCore,'core.asar'),'vendor core');
+ assert.match(run([],false).stderr,/Cannot read Discord launcher state/);
+ await put(state,'next = "../app-0.0.499"\n');
+ assert.match(run([],false).stderr,/Invalid Discord launcher host version/);
+ await put(state,'next = "0.0.416"\n');
+ assert.match(run([],false).stderr,/Discord launcher host is missing/);
+ await put(state,'next = "0.0.415"\n');
+ await put(path.join(host,'Contents/Resources/build_info.json'),'{"version":"0.0.416"}');
+ assert.match(run([],false).stderr,/Discord launcher host version mismatch/);
+ await put(path.join(host,'Contents/Resources/build_info.json'),'{"version":"0.0.415"}');
+ assert.match(run().stdout,/installed for Discord Stable 0\.0\.415/);
+ await fs.access(path.join(cores.Stable,'discord-dccon/runtime/main.cjs'));
+ assert.equal(await fs.readFile(path.join(newerCore,'index.js'),'utf8'),original);
+ env.DCCON_OFFLINE='1';
+ run(['--remove']);
+ assert.equal(await fs.readFile(path.join(cores.Stable,'index.js'),'utf8'),original);
+
  const options=require('../shelter/native').channelOptions('PTB');
  assert.deepEqual(options,{origin:'https://ptb.discord.com',directory:'discord-dccon-ptb'});
 });

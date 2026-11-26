@@ -50,7 +50,7 @@ test('manual release validates locally, then pushes the version commit and tag t
 
 test('manual release rejects other branches, invalid versions and downgrades without modifying files', t => {
   const f = fixture(t);
-  for (const env of [{GITHUB_REF: 'refs/heads/dev'}, {GITHUB_EVENT_NAME: 'push'},
+  for (const env of [{GITHUB_REF: 'refs/heads/feature'}, {GITHUB_EVENT_NAME: 'push'},
     ...['v4.0.0', '4.0.0-beta.6', '04.0.0', '3.9.9', '4.0.0; echo bad'].map(RELEASE_VERSION => ({RELEASE_VERSION}))]) {
     assert.notEqual(f.run('prepare', env).status, 0);
     assert.equal(f.git('status', '--porcelain'), '');
@@ -88,4 +88,65 @@ test('concurrent changes to main reject the atomic push without publishing the t
   failure(f.run('publish-tag'), /atomic|rejected/);
   assert.equal(f.git('ls-remote', '--tags', 'origin'), '');
   assert.match(f.git('ls-remote', 'origin', 'refs/heads/main'), new RegExp(`^${concurrent}\\s`));
+});
+
+test('dev manual release auto-increments beta.N, writes GITHUB_ENV, pushes to dev, and allows retry', t => {
+  const f = fixture(t);
+  f.git('checkout', '-b', 'dev');
+  const write = (file, data) => fs.writeFileSync(path.join(f.repo, file), JSON.stringify(data, null, 2) + '\n');
+  write('package.json', {name: 'test', version: '4.1.0'});
+  write('package-lock.json', {name: 'test', version: '4.1.0', lockfileVersion: 3,
+    packages: {'': {name: 'test', version: '4.1.0'}}});
+  f.git('add', 'package.json', 'package-lock.json');
+  f.git('commit', '-m', 'Set 4.1.0');
+  f.git('push', 'origin', 'dev');
+  const firstBase = f.git('rev-parse', 'HEAD');
+  const envFile = path.join(path.dirname(f.repo), 'github-env');
+  const devEnv = (version, extra = {}) => ({
+    GITHUB_REF: 'refs/heads/dev',
+    GITHUB_SHA: f.git('rev-parse', 'HEAD'),
+    RELEASE_VERSION: version,
+    GITHUB_ENV: envFile,
+    ...extra,
+  });
+
+  // Cannot release a beta for an already-released stable version.
+  failure(f.run('prepare', devEnv('4.1.0')), /newer/);
+  assert.equal(f.git('status', '--porcelain'), '');
+
+  // Auto-picks 4.2.0-beta.1 when given base version 4.2.0.
+  fs.writeFileSync(envFile, '');
+  success(f.run('prepare', devEnv('4.2.0')));
+  assert.equal(f.read('package.json').version, '4.2.0-beta.1');
+  assert.equal(f.read('package-lock.json').packages[''].version, '4.2.0-beta.1');
+  assert.match(fs.readFileSync(envFile, 'utf8'), /RELEASE_TAG=v4\.2\.0-beta\.1/);
+  fs.rmSync(envFile);
+  success(f.run('publish-tag', devEnv('4.2.0', {GITHUB_SHA: firstBase, GITHUB_ENV: ''})));
+  const firstBetaCommit = f.git('rev-parse', 'HEAD');
+  assert.equal(f.git('rev-parse', 'v4.2.0-beta.1^{}'), firstBetaCommit);
+  assert.match(f.git('ls-remote', 'origin', 'refs/heads/dev'), new RegExp(`^${firstBetaCommit}\\s`));
+  assert.match(f.git('ls-remote', 'origin', 'refs/tags/v4.2.0-beta.1^{}'), new RegExp(`^${firstBetaCommit}\\s`));
+
+  // Retrying the exact same commit reuses v4.2.0-beta.1 without creating beta.2.
+  f.git('checkout', '--detach', firstBase);
+  success(f.run('prepare', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: firstBase, RELEASE_VERSION: '4.2.0', GITHUB_RUN_ATTEMPT: '2'}));
+  assert.equal(f.read('package.json').version, '4.2.0-beta.1');
+  success(f.run('publish-tag', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: firstBase, RELEASE_VERSION: '4.2.0', GITHUB_RUN_ATTEMPT: '2'}));
+  assert.equal(f.git('rev-parse', 'v4.2.0-beta.1^{}'), firstBetaCommit);
+
+  // Next release on dev automatically advances to 4.2.0-beta.2.
+  f.git('checkout', '-f', 'dev');
+  const secondBase = f.git('rev-parse', 'HEAD');
+  success(f.run('prepare', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: secondBase, RELEASE_VERSION: '4.2.0'}));
+  assert.equal(f.read('package.json').version, '4.2.0-beta.2');
+  success(f.run('publish-tag', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: secondBase, RELEASE_VERSION: '4.2.0'}));
+  assert.equal(f.git('rev-parse', 'v4.2.0-beta.2^{}'), f.git('rev-parse', 'HEAD'));
+
+  // Explicit beta version works too, and rejects non-beta prerelease formats.
+  const thirdBase = f.git('rev-parse', 'HEAD');
+  failure(f.run('prepare', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: thirdBase, RELEASE_VERSION: '4.2.0-rc.1'}), /beta/);
+  success(f.run('prepare', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: thirdBase, RELEASE_VERSION: '4.2.0-beta.5'}));
+  assert.equal(f.read('package.json').version, '4.2.0-beta.5');
+  success(f.run('publish-tag', {GITHUB_REF: 'refs/heads/dev', GITHUB_SHA: thirdBase, RELEASE_VERSION: '4.2.0-beta.5'}));
+  assert.equal(f.git('rev-parse', 'v4.2.0-beta.5^{}'), f.git('rev-parse', 'HEAD'));
 });
