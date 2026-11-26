@@ -24,7 +24,7 @@ function fixture(t) {
   git('remote', 'add', 'origin', remote); git('push', 'origin', 'main');
   const sha = git('rev-parse', 'HEAD');
   const run = (command, env = {}) => spawnSync(process.execPath, [script, command], {cwd: repo, encoding: 'utf8',
-    env: {...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    env: {...process.env, GITHUB_ENV: '', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
       GITHUB_SHA: sha, RELEASE_VERSION: '4.0.0', GITHUB_RUN_ATTEMPT: '1', ...env}});
   const read = file => JSON.parse(fs.readFileSync(path.join(repo, file), 'utf8'));
   return {repo, remote, git, sha, run, read};
