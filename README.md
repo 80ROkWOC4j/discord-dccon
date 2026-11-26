@@ -221,7 +221,7 @@ cache/
 
 1. [Cloudflare 대시보드](https://dash.cloudflare.com)에서 **AI → Workers AI → Use REST API**로 이동합니다.
 2. 화면에 표시된 **Account ID**(32자리)를 복사합니다.
-3. **Create a Workers AI API Token**으로 토큰을 생성합니다. (수동으로 커스텀 토큰을 만들 경우 **Account → Workers AI → Read / Edit** 권한만 부여하세요.)
+3. **Create a Workers AI API Token**으로 토큰을 생성합니다. (수동으로 커스텀 토큰을 만들 경우 **Account → Workers AI → Read / Edit** 권한을 부여하세요. 선택 사항으로 **Account → Account Analytics → Read** 권한을 추가하면 설정 화면에서 오늘의 무료 Neurons 사용량도 함께 확인할 수 있습니다.)
 4. Discord의 **설정 → 의미 기반 검색**에서 방식을 **Cloudflare Workers AI (BYOK)**로 선택하고 Account ID와 API Token을 입력한 뒤 연결 테스트 및 저장합니다.
 
 ### API 키 저장 위치 및 보안 안내

@@ -1,7 +1,7 @@
 import type {ChangeEvent} from 'react';
 import type {Platform} from '../../platform/types.ts';
-import type {CloudflareCredentials, EmbeddingProvider, Failure} from '../types.ts';
-import {CLOUDFLARE_KEYS_NEEDED, CloudflareEmbeddingError} from '../embedding-cloudflare.ts';
+import type {CloudflareCredentials, CloudflareUsage, EmbeddingProvider, Failure} from '../types.ts';
+import {CLOUDFLARE_DAILY_LIMIT, CLOUDFLARE_KEYS_NEEDED, CloudflareEmbeddingError} from '../embedding-cloudflare.ts';
 import type {PersonalState, CardProps, SavedCardProps, SettingsState} from '../ui-types.ts';
 import type {Packs} from '../packs.ts';
 import type {Sending} from '../sending.ts';
@@ -19,7 +19,8 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   personal: Personal;
   sending: Pick<Sending, "inspectInstantSend">;
   embedding: Pick<EmbeddingService, 'enabled' | 'status' | 'toggle' | 'start' | 'provider' | 'setProvider' |
-    'hasCloudflareCredentials' | 'saveCloudflareCredentials' | 'testCloudflareCredentials'>;
+    'hasCloudflareCredentials' | 'saveCloudflareCredentials' | 'testCloudflareCredentials' |
+    'getCloudflareUsage' | 'getCloudflareUsageRevision'>;
   events: Events;
   media: MediaUI;
 }) {
@@ -190,41 +191,89 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
             onClick: props.onRemove, style: {marginLeft: "auto"}}))));
   }
   const emptyCredentials = (): CloudflareCredentials => ({accountId: '', apiToken: ''});
+  const usageNumber = new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 1});
   class EmbeddingEnvironmentPanel extends platform.react.Component<Record<string, never>,
-    {revision: number; draft: CloudflareCredentials; action: 'test' | 'save' | null; message: string}> {
+    {revision: number; draft: CloudflareCredentials; action: 'test' | 'save' | null; message: string; usage: CloudflareUsage | null}> {
     controller?: AbortController;
+    usageController?: AbortController;
+    usageRevision = -1;
+    usagePhase = '';
+    savingCredentials = false;
+    disposed = false;
 
     constructor(props: Record<string, never>) {
       super(props);
-      this.state = {revision: 0, draft: emptyCredentials(), action: null, message: ''};
+      this.state = {revision: 0, draft: emptyCredentials(), action: null, message: '', usage: null};
     }
     refresh = () => {
       const revision = this.state.revision + 1;
+      this.syncUsage();
       if (!Embedding.enabled() || Embedding.provider() !== 'cloudflare') {
-        this.controller?.abort(); this.controller = undefined;
+        this.controller?.abort(); this.controller = undefined; this.savingCredentials = false;
         this.setState({revision, draft: emptyCredentials(), action: null, message: ''});
       } else this.setState({revision});
     };
-    componentDidMount() {PluginEvents.subscribe('DCCON_EMBEDDING_UPDATE', this.refresh);}
+    componentDidMount() {
+      this.disposed = false; this.usageRevision = -1;
+      PluginEvents.subscribe('DCCON_EMBEDDING_UPDATE', this.refresh); this.syncUsage();
+    }
     componentWillUnmount() {
+      this.disposed = true;
       PluginEvents.unsubscribe('DCCON_EMBEDDING_UPDATE', this.refresh);
-      this.controller?.abort(); this.controller = undefined;
+      this.controller?.abort(); this.controller = undefined; this.savingCredentials = false;
+      this.usageController?.abort(); this.usageController = undefined;
+    }
+    syncUsage() {
+      const revision = Embedding.getCloudflareUsageRevision();
+      const active = Embedding.enabled() && Embedding.provider() === 'cloudflare' && Embedding.hasCloudflareCredentials();
+      const phase = active ? Embedding.status.phase : '';
+      const ready = ['준비 완료', '완료 · 일부 실패'].includes(phase);
+      const changed = revision !== this.usageRevision;
+      if (changed || !active) {
+        this.usageController?.abort(); this.usageController = undefined;
+        if (this.state.usage) this.setState({usage: null});
+      }
+      this.usageRevision = revision;
+      const enteredReady = ready && phase !== this.usagePhase;
+      this.usagePhase = phase;
+      if (active && !this.savingCredentials && (changed || enteredReady)) void this.fetchUsage(enteredReady);
+    }
+    async fetchUsage(replace = false) {
+      if (this.disposed || !Embedding.enabled() || Embedding.provider() !== 'cloudflare' || !Embedding.hasCloudflareCredentials()) return;
+      if (this.usageController && !replace) return;
+      this.usageController?.abort();
+      const controller = this.usageController = new AbortController();
+      const revision = Embedding.getCloudflareUsageRevision();
+      let usage: CloudflareUsage | null = null;
+      try {usage = await Embedding.getCloudflareUsage(controller.signal);}
+      catch { /* Analytics permissions are optional. */ }
+      finally {
+        if (this.usageController === controller) {
+          this.usageController = undefined;
+          if (!controller.signal.aborted && !this.disposed && revision === Embedding.getCloudflareUsageRevision()) this.setState({usage});
+        }
+      }
     }
     async apply(action: 'test' | 'save') {
       if (this.controller) return;
       const controller = this.controller = new AbortController();
+      this.savingCredentials = action === 'save';
       this.setState({action, message: ''});
       try {
         if (action === 'test') await Embedding.testCloudflareCredentials(this.state.draft, controller.signal);
         else await Embedding.saveCloudflareCredentials(this.state.draft);
         if (this.controller !== controller) return;
+        this.syncUsage();
+        void this.fetchUsage(true);
         if (action === 'save') this.setState({draft: emptyCredentials(), message: 'Cloudflare API 키를 저장했습니다.'});
         else this.setState({message: 'Cloudflare Workers AI에 연결했습니다.'});
       } catch (error) {
         if (this.controller !== controller) return;
         this.setState({message: error instanceof CloudflareEmbeddingError ? error.message : 'Cloudflare 요청을 완료하지 못했습니다.'});
       } finally {
-        if (this.controller === controller) {this.controller = undefined; this.setState({action: null});}
+        if (this.controller === controller) {
+          this.controller = undefined; this.savingCredentials = false; this.setState({action: null});
+        }
       }
     }
     renderCloudflare(enabled: boolean, saved: boolean) {
@@ -265,6 +314,14 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
             Embedding.setProvider(event.currentTarget.value as EmbeddingProvider)},
             h('option', {value: 'local'}, '로컬 (WebGPU)'),
             h('option', {value: 'cloudflare'}, 'Cloudflare Workers AI (BYOK)'))),
+        enabled && cloudflare && saved && this.state.usage && h('div', {className: 'dccon-embedding-usage'},
+          h('div', {className: 'dccon-embedding-usage-row'},
+            h('span', null, '오늘 무료 사용량 (UTC)'),
+            h('button', {type: 'button', className: 'dccon-embedding-usage-refresh', 'aria-label': '사용량 새로고침', onClick: () => void this.fetchUsage()}, '새로고침')),
+          h('div', {className: 'dccon-embedding-usage-row'},
+            h('span', null, `${usageNumber.format(this.state.usage.neurons)} / ${usageNumber.format(CLOUDFLARE_DAILY_LIMIT)} Neurons`),
+            h('span', null, `요청 ${usageNumber.format(this.state.usage.requests)}회`)),
+          h('progress', {'aria-label': '오늘 Neuron 사용량', max: CLOUDFLARE_DAILY_LIMIT, value: Math.min(CLOUDFLARE_DAILY_LIMIT, this.state.usage.neurons)})),
         cloudflare ? this.renderCloudflare(enabled, saved) :
           h("p", null, "활성화하면 EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 다운로드하고 WebGPU로 이미지를 분석합니다."),
         enabled && (waiting ? h('p', {role: 'status', className: 'dccon-embedding-waiting'}, CLOUDFLARE_KEYS_NEEDED) :

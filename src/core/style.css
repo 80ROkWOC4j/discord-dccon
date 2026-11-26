@@ -156,6 +156,11 @@
 @media (prefers-reduced-motion: reduce) { .dccon-settings-panel .dccon-switch, .dccon-switch span { transition: none; } }
 .dccon-embedding-field { display: grid; gap: 5px; min-width: 0; font-weight: 600; }
 .dccon-embedding-provider { max-width: 320px; }
+.dccon-embedding-usage { max-width: 320px; margin-top: 10px; color: var(--dc-muted); font-size: 12px; }
+.dccon-embedding-usage-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 8px; }
+.dccon-settings-panel .dccon-embedding-usage-refresh { min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-subtle, #80808055); border-radius: 4px; background: var(--dc-inset); color: var(--dc-text); font: inherit; }
+.dccon-settings-panel .dccon-embedding-usage-refresh:hover { background: var(--dc-hover); }
+.dccon-embedding-usage progress { display: block; width: 100%; height: 5px; margin-top: 5px; accent-color: var(--dc-accent); }
 .dccon-embedding-field :is(input, select) { width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border-subtle, #80808055); border-radius: 6px; background: var(--dc-inset); color: var(--dc-text); font: inherit; font-weight: 400; }
 .dccon-embedding-field :is(input, select):focus-visible { outline: 2px solid var(--dc-accent); outline-offset: -1px; }
 .dccon-embedding-field input::placeholder { color: var(--dc-muted); }

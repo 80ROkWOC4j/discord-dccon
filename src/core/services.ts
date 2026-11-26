@@ -1,5 +1,5 @@
 import type {Configuration, ConfigurationSnapshot} from '../platform/types.ts';
-import type {CloudflareCredentials, Con, EmbeddingProvider, Settings, FileSystem, SearchResult} from './types.ts';
+import type {CloudflareCredentials, CloudflareUsage, Con, EmbeddingProvider, Settings, FileSystem, SearchResult} from './types.ts';
 export type Binary = Uint8Array<ArrayBuffer>;
 export type VectorMap = Record<string, number[]>;
 export interface PendingSetting {key: keyof Settings; value: Settings[keyof Settings]; before: Settings[keyof Settings] | undefined}
@@ -39,6 +39,8 @@ export interface EmbeddingService {
   enabled(): boolean; provider(): EmbeddingProvider; setProvider(provider: EmbeddingProvider): void;
   hasCloudflareCredentials(): boolean; saveCloudflareCredentials(draft: CloudflareCredentials): Promise<void>;
   testCloudflareCredentials(draft: CloudflareCredentials, signal?: AbortSignal): Promise<void>;
+  getCloudflareUsage(signal?: AbortSignal): Promise<CloudflareUsage | null>;
+  getCloudflareUsageRevision(): number;
   key(con: Con): string; update(changes: Partial<EmbeddingStatus>): void;
   files(): FileSystem; directory(): string; vectorDirectory(): string; vectorFile(key: string): string;
   download(url: string, generation: number): Promise<import('../platform/types.ts').DownloadResponse>;
