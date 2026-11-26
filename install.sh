@@ -22,6 +22,19 @@ discord_version() {
   if is_linux; then json_value "$1/build_info.json" version;
   else /usr/bin/plutil -extract version raw -o - "$1/build_info.json"; fi
 }
+find_mac_app() {
+  local app=$1 data=$2 state="$2/install-state/app.toml" version host resources
+  if [[ ! -f "$app/Contents/Resources/launcher.conf" ]]; then printf '%s\n' "$app"; return; fi
+  # The launcher's next entry selects the host, even if other versions are present.
+  version=$(/usr/bin/sed -nE 's/^[[:space:]]*next[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"[[:space:]]*$/\1/p' "$state" 2>/dev/null) ||
+    fail "Cannot read Discord launcher state: $state. Launch Discord once, quit it, and allow your terminal to access Discord app data if prompted."
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Invalid Discord launcher host version in $state."
+  host="$data/app-$version/${app##*/}"
+  resources=$(app_resources "$host")
+  [[ -f "$resources/build_info.json" ]] || fail "Discord launcher host is missing: $host. Launch Discord once, then quit it."
+  [[ $(discord_version "$resources") == "$version" ]] || fail "Discord launcher host version mismatch: $host."
+  printf '%s\n' "$host"
+}
 discord_running() {
   local channel=$1 name
   local names=()
@@ -534,6 +547,7 @@ if is_linux; then
 elif [[ -n $discord_root ]]; then fail '--discord-root is only supported on Linux.'
 fi
 if discord_running "$channel"; then fail "Fully quit Discord $channel first."; fi
+if ! is_linux; then app=$(find_mac_app "$app" "$data"); fi
 bd="$(app_data_directory)/BetterDiscord"
 detected=$(detect_installation "$app" "$data" "$bd")
 host_mod=
