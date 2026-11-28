@@ -1,13 +1,17 @@
 import type {Platform} from '../platform/types.ts';
-import type {CloudflareCredentials} from './types.ts';
+import type {CloudflareCredentials, CloudflareUsage} from './types.ts';
 
 export const CLOUDFLARE_EMBEDDING_SPEC = 'cf-embeddinggemma-2-v1';
 export const CLOUDFLARE_KEYS_NEEDED = 'API 키 설정 필요';
 export const CLOUDFLARE_SETUP_HINT = CLOUDFLARE_KEYS_NEEDED + ' · 설정에서 Cloudflare API 키를 입력해 주세요.';
-export const CLOUDFLARE_BATCH_ITEMS = 4;
-export const CLOUDFLARE_BODY_LIMIT = 2_000_000;
+export const CLOUDFLARE_BATCH_ITEMS = 32;
+export const CLOUDFLARE_BODY_LIMIT = 6_000_000;
+export const CLOUDFLARE_CONCURRENCY = 4;
+export const CLOUDFLARE_DAILY_LIMIT = 10_000;
 const MODEL = '@cf/google/embeddinggemma-2';
 const REQUEST_TIMEOUT = 45_000;
+const USAGE_TIMEOUT = 8_000;
+const USAGE_QUERY = 'query($accountTag: String!, $start: Time!) { viewer { accounts(filter: { accountTag: $accountTag }) { aiInferenceAdaptiveGroups(limit: 10, filter: { datetime_geq: $start }) { sum { totalNeurons } count } } } }';
 const QUERY_CACHE_SIZE = 50;
 const FRAME_LIMIT = 6;
 
@@ -59,6 +63,36 @@ function responseError(status: number, body: unknown) {
     ? `Cloudflare 임베딩 요청에 실패했습니다 (${status}).` : 'Cloudflare 임베딩 요청에 실패했습니다.');
 }
 
+function parseUsage(body: unknown): CloudflareUsage | null {
+  type Group = {count?: unknown; sum?: {totalNeurons?: unknown}};
+  const result = body as {errors?: unknown; data?: {viewer?: {accounts?: {aiInferenceAdaptiveGroups?: Group[]}[]}}} | null;
+  if (result?.errors != null && !(Array.isArray(result.errors) && result.errors.length === 0)) return null;
+  const accounts = result?.data?.viewer?.accounts;
+  if (!Array.isArray(accounts) || accounts.length !== 1) return null;
+  const groups = accounts[0]?.aiInferenceAdaptiveGroups;
+  if (!Array.isArray(groups)) return null;
+  let neurons = 0, requests = 0;
+  for (const group of groups) {
+    const total = group?.sum?.totalNeurons, count = group?.count;
+    if (typeof total !== 'number' || !Number.isFinite(total) || total < 0 ||
+        typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) return null;
+    neurons += total; requests += count;
+  }
+  return Number.isFinite(neurons) && Number.isSafeInteger(requests) ? {neurons, requests} : null;
+}
+
+// A host transport or shared image download may finish in the background.
+// Do not make a cancelled operation wait for it.
+export function untilAborted<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  let abort: () => void;
+  return new Promise<T>((resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, {once: true});
+    work().then(resolve, reject);
+  }).finally(() => signal.removeEventListener('abort', abort));
+}
+
 export function createCloudflareEmbedding(net: Platform['net'], verifyConfiguration?: (signal?: AbortSignal) => Promise<void>) {
   const requests = new Set<AbortController>(), queryCache = new Map<string, number[]>();
   let epoch = 0;
@@ -74,22 +108,24 @@ export function createCloudflareEmbedding(net: Platform['net'], verifyConfigurat
     let timedOut = false;
     const timeout = setTimeout(() => {timedOut = true; abort();}, REQUEST_TIMEOUT);
     try {
-      if (verifyConfiguration) await verifyConfiguration(controller.signal);
-      controller.signal.throwIfAborted();
-      const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${MODEL}`;
-      const response = await net.fetch(url, {method: 'POST', headers: {Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json'}, body, redirect: 'manual', signal: controller.signal});
-      controller.signal.throwIfAborted();
-      const {status} = response;
-      if (status === 401 || status === 403) throw new CloudflareEmbeddingError(`Cloudflare 인증에 실패했습니다 (${status}). API 키와 Workers AI 권한을 확인해 주세요.`, true);
-      if (status === 429) throw new CloudflareEmbeddingError('Cloudflare 사용량 또는 요청 한도에 도달했습니다 (429). 잠시 후 다시 시도해 주세요.', true);
-      if (status === 0 || (status >= 300 && status < 400)) throw new CloudflareEmbeddingError('Cloudflare 리다이렉트가 차단되었습니다.', true);
-      const raw = await response.text();
-      controller.signal.throwIfAborted();
-      let json: unknown;
-      try {json = JSON.parse(raw);} catch { /* Never expose arbitrary response bodies. */ }
-      if (!response.ok || status < 200 || status >= 300) throw responseError(status, json);
-      return readVectors(json, count);
+      return await untilAborted(controller.signal, async () => {
+        if (verifyConfiguration) await verifyConfiguration(controller.signal);
+        controller.signal.throwIfAborted();
+        const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${MODEL}`;
+        const response = await net.fetch(url, {method: 'POST', headers: {Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json'}, body, redirect: 'manual', signal: controller.signal});
+        controller.signal.throwIfAborted();
+        const {status} = response;
+        if (status === 401 || status === 403) throw new CloudflareEmbeddingError(`Cloudflare 인증에 실패했습니다 (${status}). API 키와 Workers AI 권한을 확인해 주세요.`, true);
+        if (status === 429) throw new CloudflareEmbeddingError('Cloudflare 사용량 또는 요청 한도에 도달했습니다 (429). 잠시 후 다시 시도해 주세요.', true);
+        if (status === 0 || (status >= 300 && status < 400)) throw new CloudflareEmbeddingError('Cloudflare 리다이렉트가 차단되었습니다.', true);
+        const raw = await response.text();
+        controller.signal.throwIfAborted();
+        let json: unknown;
+        try {json = JSON.parse(raw);} catch { /* Never expose arbitrary response bodies. */ }
+        if (!response.ok || status < 200 || status >= 300) throw responseError(status, json);
+        return readVectors(json, count);
+      });
     } catch (error) {
       if (timedOut) throw new CloudflareEmbeddingError('Cloudflare 연결 시간이 초과되었습니다.');
       controller.signal.throwIfAborted();
@@ -104,7 +140,36 @@ export function createCloudflareEmbedding(net: Platform['net'], verifyConfigurat
   const queryVector = async (credentials: CloudflareCredentials, text: string, signal?: AbortSignal) =>
     (await request(credentials, {input: ['task: search result | query: ' + text]}, 1, signal))[0];
 
+  async function fetchUsage(credentials: CloudflareCredentials, signal?: AbortSignal): Promise<CloudflareUsage | null> {
+    if (signal?.aborted) return null;
+    // Analytics is optional and independent of indexing; a restart must not cancel it.
+    const controller = new AbortController(), abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, {once: true});
+    const timeout = setTimeout(abort, USAGE_TIMEOUT);
+    try {
+      return await untilAborted(controller.signal, async () => {
+        const {accountId, apiToken} = normalizeCloudflareCredentials(credentials);
+        if (verifyConfiguration) await verifyConfiguration(controller.signal);
+        controller.signal.throwIfAborted();
+        const start = new Date().toISOString().slice(0, 10) + 'T00:00:00Z';
+        const response = await net.fetch('https://api.cloudflare.com/client/v4/graphql', {
+          method: 'POST', headers: {Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json'},
+          redirect: 'manual', signal: controller.signal,
+          body: JSON.stringify({query: USAGE_QUERY, variables: {accountTag: accountId, start}}),
+        });
+        if (response.status !== 200 || !response.ok || controller.signal.aborted) return null;
+        const raw = await response.text();
+        controller.signal.throwIfAborted();
+        return parseUsage(JSON.parse(raw));
+      });
+    } catch {return null;}
+    finally {
+      clearTimeout(timeout); signal?.removeEventListener('abort', abort);
+    }
+  }
+
   return {
+    fetchUsage,
     async query(credentials: CloudflareCredentials, text: string, signal: AbortSignal) {
       // The embedding service resets this cache on credential/provider changes.
       signal.throwIfAborted();

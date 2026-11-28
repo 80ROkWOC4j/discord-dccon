@@ -77,14 +77,26 @@ function find(tree, predicate) {
   return [...(predicate(tree) ? [tree] : []), ...find(tree.children, predicate)];
 }
 const textOf = node => typeof node === 'string' ? node : node?.children ? node.children.map(textOf).join(' ') : '';
+const usageBlock = ui => find(ui.render(), node => node.props?.className === 'dccon-embedding-usage')[0];
+const settle = () => new Promise(setImmediate);
 const okResponse = {status: 200, ok: true, text: async () => JSON.stringify({success: true,
   result: {data: [{index: 0, embedding: [1, ...Array(767).fill(0)]}]}})};
 
-test('embedding settings expose BYOK controls, mask the token, and keep keys out of diagnostics', async () => {
+test('embedding settings expose BYOK controls, mask the token, and keep keys out of diagnostics', {timeout: 3000}, async () => {
   const indexed = createConfig(new IDBFactory());
   const requests = [];
+  let analyticsStarted;
   const h = runtime({open: () => indexed.config('open', [{}]), save: (...args) => indexed.config('save', args)},
-    async (url, options) => {requests.push({url, options}); return okResponse;});
+    async (url, options) => {
+      requests.push({url, options});
+      if (String(url).includes('/graphql')) {
+        analyticsStarted?.();
+        return {status: 200, ok: true, text: async () => JSON.stringify({data: null, errors: [
+          {message: credentials.apiToken, extensions: {code: 'authz'}},
+        ]})};
+      }
+      return okResponse;
+    });
   try {
     await h.SharedConfig.open();
     const ui = new h.EmbeddingEnvironmentPanel({}); ui.componentDidMount();
@@ -111,7 +123,12 @@ test('embedding settings expose BYOK controls, mask the token, and keep keys out
     assert.equal(requests.length, 1);
     assert.deepEqual(JSON.parse(requests[0].options.body), {input: ['task: search result | query: 연결 테스트']});
     assert.match(textOf(ui.render()), /연결했습니다/);
+    const afterSave = new Promise(resolve => {analyticsStarted = resolve;});
     await ui.apply('save');
+    await afterSave; await settle();
+    assert.equal(usageBlock(ui), undefined);
+    assert.equal(h.toasts.length, 0);
+    assert.equal(h.logs.length, 0);
     assert.match(textOf(ui.render()), /저장했습니다/);
     assert.equal(control('input', {type: 'password'}).props.value, '');
     assert.equal(control('input', {type: 'text'}).props.value, '');
@@ -120,6 +137,10 @@ test('embedding settings expose BYOK controls, mask the token, and keep keys out
     assert.equal(h.Embedding.hasCloudflareCredentials(), true);
     const diagnostics = JSON.stringify(h.inspectInstantSend());
     assert.ok(!diagnostics.includes(credentials.accountId) && !diagnostics.includes(credentials.apiToken));
+    const afterTest = new Promise(resolve => {analyticsStarted = resolve;});
+    await ui.apply('test');
+    await afterTest; await settle();
+    assert.equal(usageBlock(ui), undefined);
     control('input', {type: 'password'}).props.onChange({currentTarget: {value: 'unsaved'}});
     control('button', {role: 'switch'}).props.onClick();
     assert.equal(control('input', {type: 'password'}).props.value, '');
@@ -128,6 +149,80 @@ test('embedding settings expose BYOK controls, mask the token, and keep keys out
     ui.componentWillUnmount();
   } finally {h.Embedding.stop(); indexed.dispose();}
 });
+
+test('usage is silent until success, refreshes on demand and ready transitions, and rejects stale results', async () => {
+  const h = runtime({open: async () => ({settings: {...legacy, [key]: credentials}})});
+  await h.SharedConfig.open();
+  const e = h.Embedding;
+  let revision = 1;
+  const requests = [];
+  e.getCloudflareUsageRevision = () => revision;
+  e.getCloudflareUsage = signal => new Promise(resolve => requests.push({signal, resolve}));
+  const ui = new h.EmbeddingEnvironmentPanel({});
+  const usage = () => usageBlock(ui);
+  ui.componentDidMount();
+  assert.equal(requests.length, 1);
+  assert.equal(usage(), undefined);
+  e.status.phase = '준비 완료'; ui.refresh(); ui.refresh();
+  assert.equal(requests.length, 2);
+  assert.ok(requests[0].signal.aborted, 'index completion supersedes a pending mount fetch');
+  requests[0].resolve(null);
+  requests[1].resolve({neurons: 12345, requests: 42}); await settle();
+  assert.match(textOf(usage()), /오늘 무료 사용량 \(UTC\)/);
+  const position = ui.render().children.map(child => child?.props?.className);
+  assert.deepEqual(position.slice(2, 5), ['dccon-embedding-field dccon-embedding-provider', 'dccon-embedding-usage', 'dccon-embedding-credentials']);
+  assert.match(textOf(usage()), /12,345 \/ 10,000 Neurons/);
+  assert.equal(find(usage(), node => node.type === 'progress')[0].props.value, 10000);
+  find(usage(), node => node.type === 'button')[0].props.onClick();
+  assert.equal(requests.length, 3);
+  requests[2].resolve(null); await settle();
+  assert.equal(usage(), undefined, 'a failed refresh hides previously visible usage');
+  e.status.phase = '이미지 색인'; ui.refresh();
+  e.status.phase = '완료 · 일부 실패'; ui.refresh();
+  assert.equal(requests.length, 4);
+  revision++; ui.refresh();
+  assert.ok(requests[3].signal.aborted);
+  assert.equal(usage(), undefined);
+  assert.equal(requests.length, 5);
+  requests[3].resolve({neurons: 1, requests: 1}); await settle();
+  assert.equal(usage(), undefined);
+  requests[4].resolve({neurons: 10, requests: 2}); await settle();
+  assert.ok(usage());
+  find(usage(), node => node.type === 'button')[0].props.onClick();
+  ui.componentWillUnmount();
+  assert.ok(requests[5].signal.aborted);
+  requests[5].resolve({neurons: 20, requests: 3}); await settle();
+  assert.match(textOf(usage()), /10 \/ 10,000/);
+  e.stop();
+});
+
+for (const change of ['disable', 'local']) {
+  test(`usage is immediately cleared and pending requests aborted on ${change}`, {timeout: 3000}, async t => {
+    const db = createConfig(new IDBFactory());
+    const h = runtime({open: () => db.config('open', [{...legacy, [key]: credentials}]),
+      read: () => db.config('read', []), save: (...args) => db.config('save', args)});
+    const e = h.Embedding, ui = new h.EmbeddingEnvironmentPanel({});
+    t.after(() => {ui.componentWillUnmount(); h.services.disconnect(); e.stop(); db.dispose();});
+    await h.SharedConfig.open();
+    let pending;
+    e.getCloudflareUsage = async signal => {
+      if (!pending) return {neurons: 85.7, requests: 105};
+      return new Promise(resolve => {pending = {signal, resolve};});
+    };
+    ui.componentDidMount(); await settle();
+    assert.match(textOf(usageBlock(ui)), /85\.7/);
+    pending = {};
+    find(usageBlock(ui), node => node.type === 'button')[0].props.onClick();
+    if (change === 'disable') e.toggle(false);
+    else e.setProvider('local');
+    assert.ok(pending.signal.aborted);
+    assert.equal(usageBlock(ui), undefined);
+    assert.equal(ui.state.usage, null);
+    pending.resolve({neurons: 800, requests: 200});
+    await h.saveData('favorites', []); await settle();
+    assert.equal(usageBlock(ui), undefined);
+  });
+}
 
 test('credential save failures cannot quote backend error details in logs or the settings UI', async () => {
   const h = runtime({open: async () => ({settings: legacy}), save: async () => {throw Error(JSON.stringify(credentials));}});
@@ -244,6 +339,17 @@ for (const change of ['disable', 'local']) {
     assert.equal(calls, 1);
   });
 }
+
+test('optional analytics checks committed settings before using a stale instance token', {timeout: 3000}, async t => {
+  let calls = 0;
+  const [a, b] = await sharedInstances(t, async () => {calls++; return okResponse;});
+  assert.ok(b.Embedding.hasCloudflareCredentials());
+  a.Embedding.toggle(false);
+  await a.saveData('favorites', []);
+  assert.equal(await b.Embedding.getCloudflareUsage(), null);
+  assert.equal(calls, 0);
+  assert.equal(b.Embedding.hasCloudflareCredentials(), false);
+});
 
 test('polling observes shared settings without BroadcastChannel and stops on disconnect', {timeout: 3000}, async t => {
   const timers = new Set();

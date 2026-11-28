@@ -15,7 +15,7 @@ function sameEmbeddingSettings(a: Partial<Settings>, b: Partial<Settings>) {
 export function createSettings(platform: Platform, vectorSpec: string) {
   const listeners = new Set<(key: keyof Settings) => void>();
   type EmbeddingSync = {onChange(): void; channel?: BroadcastChannel; timer?: ReturnType<typeof setInterval>; started?: boolean};
-  let sync: EmbeddingSync | undefined;
+  let sync: EmbeddingSync | undefined, embeddingRevision = 0;
   const SharedConfig: SharedConfiguration = {
     data: null, backend: null, pending: [], work: Promise.resolve(),
     async open() {
@@ -45,7 +45,9 @@ export function createSettings(platform: Platform, vectorSpec: string) {
       });
       this.work = request.catch(() => {
         this.pending = this.pending.filter(item => item !== operation);
-        if (key === "embeddingCloudflareCredentials" && !this.pending.some(item => item.key === key)) delete this.data?.[key];
+        if (key === 'embeddingCloudflareCredentials' && this.data?.[key] && !this.pending.some(item => item.key === key)) {
+          delete this.data[key]; embeddingRevision++;
+        }
         // An error from a settings backend can contain a fragment of config.json.
         platform.logger.error("discord-dccon", "Shared configuration save failed");
         platform.ui.showToast("설정을 저장하지 못했습니다.", {type: "error"});
@@ -63,8 +65,11 @@ export function createSettings(platform: Platform, vectorSpec: string) {
       forgetInactiveEmbeddingCredentials(next);
     }
     SharedConfig.data = next;
-    const changed = !!before && !sameEmbeddingSettings(before, next);
-    if (notify && changed) sync?.onChange();
+    const changed = !sameEmbeddingSettings(before ?? {}, next);
+    if (changed) {
+      embeddingRevision++;
+      if (notify) sync?.onChange();
+    }
     return changed;
   }
 
@@ -132,18 +137,25 @@ export function createSettings(platform: Platform, vectorSpec: string) {
     return data;
   }
 
+  function embeddingSettings() {
+    return {embeddingEnabled: loadData('embeddingEnabled'), embeddingProvider: loadData('embeddingProvider'),
+      embeddingCloudflareCredentials: loadData('embeddingCloudflareCredentials')};
+  }
+
   function saveData<K extends keyof Settings>(key: K, data: Settings[K]) {
+    const before = EMBEDDING_KEYS.has(key) ? embeddingSettings() : undefined;
     const result = SharedConfig.data ? SharedConfig.save(key, data) : platform.data.save!(key, data);
     if (!SharedConfig.data && ((key === "embeddingEnabled" && data !== true) ||
       (key === "embeddingProvider" && data !== "cloudflare")) && platform.data.load("embeddingCloudflareCredentials") !== undefined) {
       platform.data.save!("embeddingCloudflareCredentials", undefined);
     }
+    if (before && !sameEmbeddingSettings(before, embeddingSettings())) embeddingRevision++;
     for (const listener of [...listeners]) listener(key);
     return result;
   }
 
   return {open: () => SharedConfig.open(), loadData, saveData, isReady: () => SharedConfig.data !== null,
-    refreshEmbeddingSettings, watchEmbeddingSettings,
+    refreshEmbeddingSettings, watchEmbeddingSettings, getEmbeddingRevision: () => embeddingRevision,
     subscribe(listener: (key: keyof Settings) => void) {listeners.add(listener); return () => {listeners.delete(listener);};}};
 }
 export type SettingsService = ReturnType<typeof createSettings>;

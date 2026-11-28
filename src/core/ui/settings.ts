@@ -1,7 +1,7 @@
 import type {ChangeEvent} from 'react';
 import type {Platform} from '../../platform/types.ts';
-import type {CloudflareCredentials, EmbeddingProvider, Failure} from '../types.ts';
-import {CLOUDFLARE_KEYS_NEEDED, CloudflareEmbeddingError} from '../embedding-cloudflare.ts';
+import type {CloudflareCredentials, CloudflareUsage, EmbeddingProvider, Failure} from '../types.ts';
+import {CLOUDFLARE_DAILY_LIMIT, CLOUDFLARE_KEYS_NEEDED, CloudflareEmbeddingError} from '../embedding-cloudflare.ts';
 import type {PersonalState, CardProps, SavedCardProps, SettingsState} from '../ui-types.ts';
 import type {Packs} from '../packs.ts';
 import type {Sending} from '../sending.ts';
@@ -19,12 +19,13 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   personal: Personal;
   sending: Pick<Sending, "inspectInstantSend">;
   embedding: Pick<EmbeddingService, 'enabled' | 'status' | 'toggle' | 'start' | 'provider' | 'setProvider' |
-    'hasCloudflareCredentials' | 'saveCloudflareCredentials' | 'testCloudflareCredentials'>;
+    'hasCloudflareCredentials' | 'saveCloudflareCredentials' | 'testCloudflareCredentials' |
+    'getCloudflareUsage' | 'getCloudflareUsageRevision'>;
   events: Events;
   media: MediaUI;
 }) {
   const {personalCons, getDCConSearchResult, loadPacks} = packs;
-  const {personalURL, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon} = personal;
+  const {personalURL, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon, renamePersonalCon} = personal;
   const {inspectInstantSend} = sending;
   const {DCConImage, PersonalImage, BufferImage, PackThumbnail, Button} = media;
   const getLocaleStrings = () => stringsFor(platform.discord.locale);
@@ -36,7 +37,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
 
     constructor(props: Record<string, never>) {
       super(props);
-      this.state = {items: personalCons(), open: false, input: "", title: "", prepared: null, busy: false, message: ""};
+      this.state = {items: personalCons(), open: false, input: "", title: "", prepared: null, busy: false, message: "", editingPath: null, editTitle: ""};
       this.refresh = () => this.setState({items: personalCons()});
     }
     componentDidMount() { PluginEvents.subscribe("DCCON_PERSONAL_UPDATE", this.refresh); }
@@ -98,6 +99,21 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
           "등록된 개별 콘이 없습니다. 이미지 링크로 콘을 추가해 보세요."),
         h("div", {className: "dccon-saved-container"}, s.items.map((con, index) => h(SavedConCard, {
           key: con.path, title: con.title || "개별 콘",
+          titleEditor: s.editingPath === con.path ? h("form", {className: "dccon-personal-rename", onSubmit: event => {
+            event.preventDefault();
+            const title = this.state.editTitle.trim();
+            if (!title || title.length > 100) return;
+            void this.work(async () => {
+              await renamePersonalCon(con, title);
+              if (!this.disposed) this.setState({editingPath: null, editTitle: "", message: "이름을 변경했습니다."});
+            });
+          }},
+            h("input", {"aria-label": "콘 이름", value: s.editTitle, maxLength: 100, autoFocus: true, disabled: s.busy,
+              onChange: e => this.setState({editTitle: (e.target as HTMLInputElement).value}),
+              onKeyDown: e => {if (e.key === "Escape" && !s.busy) {e.preventDefault(); this.setState({editingPath: null, editTitle: "", message: ""});}}}),
+            h("button", {type: "submit", className: "dccon-button", disabled: s.busy || !s.editTitle.trim() || s.editTitle.trim().length > 100}, "저장"),
+            h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.setState({editingPath: null, editTitle: "", message: ""})}, "취소")) : undefined,
+          onRename: s.editingPath === con.path ? undefined : () => this.setState({editingPath: con.path, editTitle: con.title || "", message: ""}),
           thumbnail: h(PersonalImage, {con}),
           isFirst: index === 0, isLast: index === s.items.length - 1, disabled: s.busy,
           onMove: direction => this.work(() => movePersonalCon(con, direction)),
@@ -179,52 +195,101 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     const h = platform.react.createElement;
     return h("div", {className: "dccon-card"}, h("div", {className: "dccon-card-thumbnail"}, props.thumbnail),
       h("div", {className: "dccon-card-content"},
-        h("h3", {title: props.title}, props.title),
+        props.titleEditor || h("h3", {title: props.title}, props.title),
         h("span", {"aria-hidden": !props.description || undefined}, props.description),
         h("div", {className: "dccon-pack-actions"},
           h("div", {className: "dccon-pack-order", role: "group", "aria-label": props.title + " 순서 조절"},
             ...([[-1, "위로", props.isFirst], [1, "아래로", props.isLast]] as const).map(([direction, label, boundary]) =>
               h("button", {key: direction, type: "button", disabled: props.disabled || boundary,
                 "aria-label": props.title + " " + label, onClick: () => props.onMove(direction)}, label))),
+          props.onRename && h("button", {type: "button", className: "dccon-button", disabled: props.disabled, "aria-label": props.title + " 이름 변경", onClick: props.onRename}, "이름 변경"),
           h(Button, {text: getLocaleStrings().settings.remove, color: "dccon-item-error", disabled: props.disabled,
             onClick: props.onRemove, style: {marginLeft: "auto"}}))));
   }
   const emptyCredentials = (): CloudflareCredentials => ({accountId: '', apiToken: ''});
+  const usageNumber = new Intl.NumberFormat('ko-KR', {maximumFractionDigits: 1});
   class EmbeddingEnvironmentPanel extends platform.react.Component<Record<string, never>,
-    {revision: number; draft: CloudflareCredentials; action: 'test' | 'save' | null; message: string}> {
+    {revision: number; draft: CloudflareCredentials; action: 'test' | 'save' | null; message: string; usage: CloudflareUsage | null}> {
     controller?: AbortController;
+    usageController?: AbortController;
+    usageRevision = -1;
+    usagePhase = '';
+    savingCredentials = false;
+    disposed = false;
 
     constructor(props: Record<string, never>) {
       super(props);
-      this.state = {revision: 0, draft: emptyCredentials(), action: null, message: ''};
+      this.state = {revision: 0, draft: emptyCredentials(), action: null, message: '', usage: null};
     }
     refresh = () => {
       const revision = this.state.revision + 1;
+      this.syncUsage();
       if (!Embedding.enabled() || Embedding.provider() !== 'cloudflare') {
-        this.controller?.abort(); this.controller = undefined;
+        this.controller?.abort(); this.controller = undefined; this.savingCredentials = false;
         this.setState({revision, draft: emptyCredentials(), action: null, message: ''});
       } else this.setState({revision});
     };
-    componentDidMount() {PluginEvents.subscribe('DCCON_EMBEDDING_UPDATE', this.refresh);}
+    componentDidMount() {
+      this.disposed = false; this.usageRevision = -1;
+      PluginEvents.subscribe('DCCON_EMBEDDING_UPDATE', this.refresh); this.syncUsage();
+    }
     componentWillUnmount() {
+      this.disposed = true;
       PluginEvents.unsubscribe('DCCON_EMBEDDING_UPDATE', this.refresh);
-      this.controller?.abort(); this.controller = undefined;
+      this.controller?.abort(); this.controller = undefined; this.savingCredentials = false;
+      this.usageController?.abort(); this.usageController = undefined;
+    }
+    syncUsage() {
+      const revision = Embedding.getCloudflareUsageRevision();
+      const active = Embedding.enabled() && Embedding.provider() === 'cloudflare' && Embedding.hasCloudflareCredentials();
+      const phase = active ? Embedding.status.phase : '';
+      const ready = ['준비 완료', '완료 · 일부 실패'].includes(phase);
+      const changed = revision !== this.usageRevision;
+      if (changed || !active) {
+        this.usageController?.abort(); this.usageController = undefined;
+        if (this.state.usage) this.setState({usage: null});
+      }
+      this.usageRevision = revision;
+      const enteredReady = ready && phase !== this.usagePhase;
+      this.usagePhase = phase;
+      if (active && !this.savingCredentials && (changed || enteredReady)) void this.fetchUsage(enteredReady);
+    }
+    async fetchUsage(replace = false) {
+      if (this.disposed || !Embedding.enabled() || Embedding.provider() !== 'cloudflare' || !Embedding.hasCloudflareCredentials()) return;
+      if (this.usageController && !replace) return;
+      this.usageController?.abort();
+      const controller = this.usageController = new AbortController();
+      const revision = Embedding.getCloudflareUsageRevision();
+      let usage: CloudflareUsage | null = null;
+      try {usage = await Embedding.getCloudflareUsage(controller.signal);}
+      catch { /* Analytics permissions are optional. */ }
+      finally {
+        if (this.usageController === controller) {
+          this.usageController = undefined;
+          if (!controller.signal.aborted && !this.disposed && revision === Embedding.getCloudflareUsageRevision()) this.setState({usage});
+        }
+      }
     }
     async apply(action: 'test' | 'save') {
       if (this.controller) return;
       const controller = this.controller = new AbortController();
+      this.savingCredentials = action === 'save';
       this.setState({action, message: ''});
       try {
         if (action === 'test') await Embedding.testCloudflareCredentials(this.state.draft, controller.signal);
         else await Embedding.saveCloudflareCredentials(this.state.draft);
         if (this.controller !== controller) return;
+        this.syncUsage();
+        void this.fetchUsage(true);
         if (action === 'save') this.setState({draft: emptyCredentials(), message: 'Cloudflare API 키를 저장했습니다.'});
         else this.setState({message: 'Cloudflare Workers AI에 연결했습니다.'});
       } catch (error) {
         if (this.controller !== controller) return;
         this.setState({message: error instanceof CloudflareEmbeddingError ? error.message : 'Cloudflare 요청을 완료하지 못했습니다.'});
       } finally {
-        if (this.controller === controller) {this.controller = undefined; this.setState({action: null});}
+        if (this.controller === controller) {
+          this.controller = undefined; this.savingCredentials = false; this.setState({action: null});
+        }
       }
     }
     renderCloudflare(enabled: boolean, saved: boolean) {
@@ -265,6 +330,14 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
             Embedding.setProvider(event.currentTarget.value as EmbeddingProvider)},
             h('option', {value: 'local'}, '로컬 (WebGPU)'),
             h('option', {value: 'cloudflare'}, 'Cloudflare Workers AI (BYOK)'))),
+        enabled && cloudflare && saved && this.state.usage && h('div', {className: 'dccon-embedding-usage'},
+          h('div', {className: 'dccon-embedding-usage-row'},
+            h('span', null, '오늘 무료 사용량 (UTC)'),
+            h('button', {type: 'button', className: 'dccon-embedding-usage-refresh', 'aria-label': '사용량 새로고침', onClick: () => void this.fetchUsage()}, '새로고침')),
+          h('div', {className: 'dccon-embedding-usage-row'},
+            h('span', null, `${usageNumber.format(this.state.usage.neurons)} / ${usageNumber.format(CLOUDFLARE_DAILY_LIMIT)} Neurons`),
+            h('span', null, `요청 ${usageNumber.format(this.state.usage.requests)}회`)),
+          h('progress', {'aria-label': '오늘 Neuron 사용량', max: CLOUDFLARE_DAILY_LIMIT, value: Math.min(CLOUDFLARE_DAILY_LIMIT, this.state.usage.neurons)})),
         cloudflare ? this.renderCloudflare(enabled, saved) :
           h("p", null, "활성화하면 EmbeddingGemma 2 q4 모델(약 320 MB)과 실행 파일을 다운로드하고 WebGPU로 이미지를 분석합니다."),
         enabled && (waiting ? h('p', {role: 'status', className: 'dccon-embedding-waiting'}, CLOUDFLARE_KEYS_NEEDED) :

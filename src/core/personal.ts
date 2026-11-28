@@ -8,7 +8,7 @@ import type {Sending} from './sending.ts';
 import type {Events} from './events.ts';
 import {webpFile} from './codecs.ts';
 import {PERSONAL_PACK} from './packs.ts';
-export function createPersonal(platform: Platform, settings: SettingsService, packs: Packs, cache: Cache, WebPCache: WebPService, sending: Pick<Sending, "isSendingCon" | "removeQueuedCon">, PluginEvents: Events) {
+export function createPersonal(platform: Platform, settings: SettingsService, packs: Packs, cache: Cache, WebPCache: WebPService, sending: Pick<Sending, "isSendingCon" | "removeQueuedCon" | "renameQueuedCon">, PluginEvents: Events) {
   const {loadData, saveData} = settings;
   const {personalCons} = packs;
   const {imageFS, personalFile, writeCacheFile} = cache;
@@ -111,6 +111,22 @@ export function createPersonal(platform: Platform, settings: SettingsService, pa
     await saveData("personalCons", [...items, {...con, title: title.trim() || `개별 콘 ${items.length + 1}`}]);
     PluginEvents.dispatch({type: "DCCON_PERSONAL_UPDATE"});
   }
+  async function renamePersonalCon(con: Con, name: string) {
+    const title = name.trim();
+    if (!title || title.length > 100) throw Error("이름은 1~100자로 입력해 주세요.");
+    const items = personalCons();
+    if (!items.some(item => item.path === con.path)) throw Error("등록된 개별 콘을 찾을 수 없습니다.");
+    const update = (list: Con[]) => list.map(item => item.path === con.path ? {...item, title} : item);
+    await saveData("personalCons", update(items));
+    PluginEvents.dispatch({type: "DCCON_PERSONAL_UPDATE"});
+    sending.renameQueuedCon(con, title);
+    for (const key of ["favorites", "recent"] as const) {
+      const list = loadData(key, []);
+      if (!list.some(item => item.path === con.path && item.title !== title)) continue;
+      await saveData(key, update(list));
+      PluginEvents.dispatch({type: key === "favorites" ? "DCCON_FAVORITES_UPDATE" : "DCCON_RECENT_UPDATE"});
+    }
+  }
   async function movePersonalCon(con: Con, direction: number) {
     const items = personalCons(), from = items.findIndex(item => item.path === con.path);
     const to = from + direction;
@@ -131,6 +147,6 @@ export function createPersonal(platform: Platform, settings: SettingsService, pa
     PluginEvents.dispatch({type: "DCCON_RECENT_UPDATE"});
   }
 
-  return {personalURL, personalVideo, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon};
+  return {personalURL, personalVideo, preparePersonalCon, storePersonalCon, renamePersonalCon, movePersonalCon, removePersonalCon};
 }
 export type Personal = ReturnType<typeof createPersonal>;

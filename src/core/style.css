@@ -129,6 +129,11 @@
 .dccon-personal-form label { display: grid; gap: 6px; }
 .dccon-personal-form input { width: 100%; min-width: 0; padding: 8px; border: 1px solid #80808033; border-radius: 4px; background: var(--dc-inset); }
 .dccon-personal-actions { display: flex; gap: 8px; }
+.dccon-card-content:has(.dccon-personal-rename) { height: auto; min-height: 72px; }
+.dccon-card-content:has(.dccon-personal-rename) > span { display: none; }
+.dccon-personal-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.dccon-personal-rename input { flex: 1 1 120px; min-width: 0; width: 100%; padding: 7px 8px; border: 1px solid #80808066; border-radius: 4px; background: var(--dc-inset); color: inherit; }
+.dccon-personal-rename input:focus { outline: 2px solid var(--dc-accent); }
 .dccon-personal p { margin: 12px 0; color: var(--dc-muted); }
 .dccon-personal p:empty { display: none; }
 .dccon-personal-preview { width: 72px; height: 72px; flex-shrink: 0; }
@@ -156,6 +161,11 @@
 @media (prefers-reduced-motion: reduce) { .dccon-settings-panel .dccon-switch, .dccon-switch span { transition: none; } }
 .dccon-embedding-field { display: grid; gap: 5px; min-width: 0; font-weight: 600; }
 .dccon-embedding-provider { max-width: 320px; }
+.dccon-embedding-usage { max-width: 320px; margin-top: 10px; color: var(--dc-muted); font-size: 12px; }
+.dccon-embedding-usage-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 8px; }
+.dccon-settings-panel .dccon-embedding-usage-refresh { min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-subtle, #80808055); border-radius: 4px; background: var(--dc-inset); color: var(--dc-text); font: inherit; }
+.dccon-settings-panel .dccon-embedding-usage-refresh:hover { background: var(--dc-hover); }
+.dccon-embedding-usage progress { display: block; width: 100%; height: 5px; margin-top: 5px; accent-color: var(--dc-accent); }
 .dccon-embedding-field :is(input, select) { width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border-subtle, #80808055); border-radius: 6px; background: var(--dc-inset); color: var(--dc-text); font: inherit; font-weight: 400; }
 .dccon-embedding-field :is(input, select):focus-visible { outline: 2px solid var(--dc-accent); outline-offset: -1px; }
 .dccon-embedding-field input::placeholder { color: var(--dc-muted); }

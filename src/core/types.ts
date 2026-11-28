@@ -4,6 +4,7 @@ export interface Pack {info: {package_idx: PackId; title: string; main_img_path?
 export interface PackSearchResult {idx: string; thumbId: string; name: string; seller: string}
 export type EmbeddingProvider = 'local' | 'cloudflare';
 export interface CloudflareCredentials {accountId: string; apiToken: string}
+export interface CloudflareUsage {neurons: number; requests: number}
 export interface Settings {
   dccons: Pack[]; dcconsBeforeDedup: Pack[]; favorites: Con[]; recent: Con[];
   personalCons: Con[]; collapsedPacks: Record<string, boolean>; embeddingEnabled: boolean;

@@ -10,7 +10,7 @@ Discord 채팅 입력창에서 디시콘을 보내는 확장입니다. BetterDis
 - 클릭하면 디시콘을 이미지로 전송
 - 채팅 입력창의 만두 버튼으로 디시콘 메뉴 열기
 - 디시콘 팩 검색·추가·제거, 등록한 콘 검색
-- 디시콘·아카콘 링크로 개별 콘 추가·제거
+- 디시콘·아카콘 링크로 개별 콘 추가·이름 변경·제거
 - 좌측 팩 탐색, 최근 사용, 즐겨찾기
 - Shift+클릭으로 여러 콘을 모아서 함께 전송
 - 의미 기반 검색
@@ -153,11 +153,13 @@ bash install.sh --purge
 
 <img src="images/pack-search.png" alt="디시콘샵에서 고양이 검색" width="520">
 
-### 개별 콘 추가
+### 개별 콘 관리
 
-**팩 추가 / 관리 → 개별 콘 → 콘 추가**에서 디시콘·아카콘 이미지 링크를 등록할 수 있습니다.
+**팩 추가 / 관리 → 개별 콘 → 콘 추가**에서 디시콘·아카콘 이미지 링크를 등록할 수 있습니다. 등록한 콘의 **이름 변경**을 눌러 새 이름을 입력한 뒤 **저장**하세요. 즐겨찾기와 최근 사용 목록에도 새 이름이 반영됩니다.
 
 <img src="images/individual.png" alt="개별콘" width="520">
+
+<img src="images/personal-rename-preview.png" alt="개별 콘 카드에서 이름 변경을 누르기 전과 후" width="520">
 
 ### 기본 사용법
 
@@ -221,7 +223,7 @@ cache/
 
 1. [Cloudflare 대시보드](https://dash.cloudflare.com)에서 **AI → Workers AI → Use REST API**로 이동합니다.
 2. 화면에 표시된 **Account ID**(32자리)를 복사합니다.
-3. **Create a Workers AI API Token**으로 토큰을 생성합니다. (수동으로 커스텀 토큰을 만들 경우 **Account → Workers AI → Read / Edit** 권한만 부여하세요.)
+3. **Create a Workers AI API Token**으로 토큰을 생성합니다. (수동으로 커스텀 토큰을 만들 경우 **Account → Workers AI → Read / Edit** 권한을 부여하세요. 선택 사항으로 **Account → Account Analytics → Read** 권한을 추가하면 설정 화면에서 오늘의 무료 Neurons 사용량도 함께 확인할 수 있습니다.)
 4. Discord의 **설정 → 의미 기반 검색**에서 방식을 **Cloudflare Workers AI (BYOK)**로 선택하고 Account ID와 API Token을 입력한 뒤 연결 테스트 및 저장합니다.
 
 ### API 키 저장 위치 및 보안 안내

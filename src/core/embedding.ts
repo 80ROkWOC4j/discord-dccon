@@ -7,8 +7,8 @@ import type {Packs} from './packs.ts';
 import type {Images} from './images.ts';
 import type {Events} from './events.ts';
 import {embeddingWorker} from './workers.ts';
-import {CLOUDFLARE_EMBEDDING_SPEC, CLOUDFLARE_KEYS_NEEDED, CLOUDFLARE_SETUP_HINT, CLOUDFLARE_BATCH_ITEMS, CLOUDFLARE_BODY_LIMIT,
-  CloudflareEmbeddingError, createCloudflareEmbedding, normalizeCloudflareCredentials, prepareCloudflareImage,
+import {CLOUDFLARE_EMBEDDING_SPEC, CLOUDFLARE_KEYS_NEEDED, CLOUDFLARE_SETUP_HINT, CLOUDFLARE_BATCH_ITEMS, CLOUDFLARE_BODY_LIMIT, CLOUDFLARE_CONCURRENCY,
+  CloudflareEmbeddingError, createCloudflareEmbedding, normalizeCloudflareCredentials, prepareCloudflareImage, untilAborted,
   type CloudflareImage} from './embedding-cloudflare.ts';
 export const EMBEDDING_SPEC = "q4-image280-video6x140-v3";
 // These revisions share the same normalized 768-dimensional embedding space.
@@ -20,8 +20,6 @@ export function readEmbeddingVectors(saved: {spec?: string; vectors?: Record<str
     (saved.spec !== "q8-560-gif3-browser-v1" || !key.endsWith(":gif")) && Array.isArray(vector) &&
     vector.length === 768 && vector.every(Number.isFinite) && Math.abs(Math.hypot(...vector) - 1) < 0.001)) as VectorMap;
 }
-
-// Runs in a browser Worker: no Node, native addons, or local PoC server required.
 
 export function createEmbedding(platform: Platform, settings: SettingsService, cache: Cache, packs: Packs, images: Images, PluginEvents: Events) {
   const {loadData, saveData} = settings;
@@ -38,6 +36,7 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
       throw new CloudflareEmbeddingError('Cloudflare 설정이 변경되었습니다.');
   });
   let cloudFailure: CloudflareEmbeddingError | undefined, searchController: AbortController | undefined;
+  let cloudIndexController: AbortController | undefined;
   const readCredentials = () => loadData('embeddingCloudflareCredentials');
   function resolveCredentials(draft: CloudflareCredentials) {
     if (!Embedding.enabled() || Embedding.provider() !== 'cloudflare') throw new CloudflareEmbeddingError('먼저 Cloudflare 의미 기반 검색을 켜 주세요.');
@@ -46,10 +45,13 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
       apiToken: draft.apiToken.trim() || saved?.apiToken || ''});
   }
   function haltCloudflare(error: CloudflareEmbeddingError) {
+    if (cloudFailure) return;
     cloudFailure = error;
     Embedding.ready = false; Embedding.reindex = false;
+    cloudIndexController?.abort(error);
     cloudflare.stop();
-    Embedding.update({phase: '오류', file: '', error: error.message});
+    // An active index publishes its terminal phase after draining the checkpoint.
+    if (!Embedding.indexing) Embedding.update({phase: '오류', file: '', error: error.message});
   }
   const Embedding: EmbeddingService = {
     worker: null, generation: 0, sequence: 0, pending: new Map(), vectors: {}, dirtyVectors: 0, urls: [],
@@ -74,13 +76,26 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
       const credentials = resolveCredentials(draft);
       this.stop();
       const generation = this.generation;
-      try {await saveData('embeddingCloudflareCredentials', credentials);}
-      catch {throw new CloudflareEmbeddingError('Cloudflare API 키를 저장하지 못했습니다.');}
+      try {
+        const saved = saveData('embeddingCloudflareCredentials', credentials);
+        this.update({}); // Surface the new credential revision before the save settles.
+        await saved;
+      } catch {
+        this.update({});
+        throw new CloudflareEmbeddingError('Cloudflare API 키를 저장하지 못했습니다.');
+      }
       if (generation !== this.generation) return;
       if (!this.hasCloudflareCredentials()) throw new CloudflareEmbeddingError('Cloudflare API 키를 저장하지 못했습니다.');
       this.start();
     },
     async testCloudflareCredentials(draft, signal) {await cloudflare.test(resolveCredentials(draft), signal);},
+    getCloudflareUsageRevision: settings.getEmbeddingRevision,
+    async getCloudflareUsage(signal) {
+      if (!this.hasCloudflareCredentials()) return null;
+      const revision = this.getCloudflareUsageRevision();
+      const usage = await cloudflare.fetchUsage(readCredentials()!, signal);
+      return !signal?.aborted && revision === this.getCloudflareUsageRevision() ? usage : null;
+    },
     key(con) {return con.path + ":" + con.ext;},
     update(changes) {
       Object.assign(this.status, changes);
@@ -150,6 +165,7 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
     stop() {
       clearTimeout(this.startTimer!); this.startTimer = null; this.starting = false;
       this.generation++; this.cancelSearch();
+      cloudIndexController?.abort(); cloudIndexController = undefined;
       cloudFailure = undefined; cloudflare.stop();
       for (const controller of this.downloads) controller.abort();
       this.downloads.clear();
@@ -249,7 +265,9 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
       if (this.indexing) {this.reindex = true; return;}
       this.indexing = true;
       const generation = this.generation, isCloud = this.provider() === 'cloudflare';
-      let usable = 0, transientFailures = 0;
+      const indexController = isCloud ? cloudIndexController = new AbortController() : undefined;
+      const inFlight = new Set<Promise<void>>();
+      let usable = 0, transientFailures = 0, checkpointWork = Promise.resolve();
       const currentSpec = isCloud ? CLOUDFLARE_EMBEDDING_SPEC : EMBEDDING_SPEC;
       const compatibleSpecs = isCloud ? [currentSpec] : COMPATIBLE_SPECS;
       const items = new Map(pickerPacks().flatMap(pack => pack.detail).map(con => [this.key(con), con]));
@@ -258,25 +276,32 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
         if (generation !== this.generation) throw Error('임베딩 중단됨');
         if (isCloud && cloudFailure) throw cloudFailure;
       };
-      const checkpoint = async () => {
-        if (!this.dirtyVectors || generation !== this.generation) return;
-        const fs = this.files();
-        for (const key of [...this.pendingVectorKeys]) {
-          const vector = this.vectors[key];
-          await writeCacheFile(this.vectorFile(key), JSON.stringify({spec: currentSpec, key, vector}), fs, () => {
-            if (generation !== this.generation) throw Error("임베딩 중단됨");
-          });
-          if (generation !== this.generation) return;
-          this.pendingVectorKeys.delete(key); this.dirtyVectors = this.pendingVectorKeys.size;
-        }
+      const checkpoint = () => {
+        const save = checkpointWork.then(async () => {
+          if (!this.dirtyVectors || generation !== this.generation) return;
+          const fs = this.files();
+          for (const key of [...this.pendingVectorKeys]) {
+            const vector = this.vectors[key];
+            await writeCacheFile(this.vectorFile(key), JSON.stringify({spec: currentSpec, key, vector}), fs, () => {
+              if (generation !== this.generation) throw Error("임베딩 중단됨");
+            });
+            if (generation !== this.generation) return;
+            this.pendingVectorKeys.delete(key); this.dirtyVectors = this.pendingVectorKeys.size;
+          }
+        });
+        checkpointWork = save.catch(() => {});
+        return save;
       };
+      function rememberVector(key: string, vector: number[], fresh: boolean) {
+        usable++;
+        Embedding.vectors[key] = vector;
+        if (fresh) {
+          Embedding.pendingVectorKeys.add(key); Embedding.dirtyVectors = Embedding.pendingVectorKeys.size;
+        }
+      }
       const finish = async (key: string, vector?: number[], fresh = false) => {
         checkActive();
-        if (vector) {
-          usable++;
-          this.vectors[key] = vector;
-          if (fresh) {this.pendingVectorKeys.add(key); this.dirtyVectors = this.pendingVectorKeys.size;}
-        }
+        if (vector) rememberVector(key, vector, fresh);
         this.update({completed: this.status.completed + 1});
         if (this.dirtyVectors >= 10) await checkpoint();
       };
@@ -306,49 +331,53 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
         // A failed local model/device should not trigger hundreds of repeated inference attempts.
         if (!isCloud && this.status.errors >= 3) throw error;
       };
+      const cloudIndexError = (error: unknown) => error instanceof CloudflareEmbeddingError ? error
+        : new CloudflareEmbeddingError('Cloudflare 이미지 색인에 실패했습니다.');
       try {
         const credentials = isCloud ? normalizeCloudflareCredentials(readCredentials()) : undefined;
-        const batch: {key: string; image: CloudflareImage}[] = [];
+        type Entry = {key: string; image: CloudflareImage};
+        const batch: Entry[] = [];
         const overhead = JSON.stringify({messages: []}).length;
         let bodySize = overhead;
-        const flush = async () => {
-          if (!batch.length || !credentials) return;
+        const embedBatch = async (entries: Entry[]) => {
           checkActive();
-          const entries = batch.splice(0); bodySize = overhead;
-          let vectors;
-          const request = async (images: CloudflareImage[]) => {
-            try {
-              const result = await cloudflare.imageBatch(credentials, images);
-              transientFailures = 0;
-              return result;
-            } catch (error) {
-              checkActive();
-              if (error instanceof CloudflareEmbeddingError && error.fatal) {haltCloudflare(error); throw error;}
-              if (error instanceof CloudflareEmbeddingError && error.splittable) transientFailures = 0;
-              else transientFailures++;
-              throw error;
-            }
-          };
-          const failed = async (failedEntries: typeof entries, error: unknown) => {
-            for (const {key} of failedEntries) {recordError(error); await finish(key);}
-            if (transientFailures >= 3) {this.reindex = false; throw error;}
-          };
-          try {vectors = await request(entries.map(entry => entry.image));}
+          let vectors: number[][];
+          try {vectors = await cloudflare.imageBatch(credentials!, entries.map(entry => entry.image));}
           catch (error) {
             checkActive();
-            if (!(error instanceof CloudflareEmbeddingError && error.splittable) || entries.length === 1) {
-              await failed(entries, error); return;
+            const failure = cloudIndexError(error);
+            if (failure.fatal) {haltCloudflare(failure); return;}
+            if (failure.splittable && entries.length > 1) {
+              const mid = Math.ceil(entries.length / 2);
+              // Both halves share the worker slot, so retries do not exceed the request cap.
+              await embedBatch(entries.slice(0, mid));
+              await embedBatch(entries.slice(mid));
+              return;
             }
-            for (const entry of entries) {
-              checkActive();
-              let vector;
-              try {[vector] = await request([entry.image]);}
-              catch (singleError) {await failed([entry], singleError); continue;}
-              await finish(entry.key, vector, true);
-            }
+            const tripped = !failure.splittable && ++transientFailures >= 3;
+            this.update({errors: this.status.errors + entries.length, completed: this.status.completed + entries.length, error: failure.message});
+            if (tripped && generation === this.generation) haltCloudflare(failure);
             return;
           }
-          for (const [i, {key}] of entries.entries()) await finish(key, vectors[i], true);
+          checkActive();
+          transientFailures = 0;
+          // Stage the whole response before yielding, so a peer halt can checkpoint it.
+          entries.forEach(({key}, i) => rememberVector(key, vectors[i], true));
+          this.update({completed: this.status.completed + entries.length});
+          if (this.dirtyVectors >= 10) await checkpoint();
+        };
+        const submit = async () => {
+          if (!batch.length) return;
+          // The producer can build one lookahead batch, then waits for a free slot.
+          while (inFlight.size >= CLOUDFLARE_CONCURRENCY) {
+            await Promise.race(inFlight); checkActive();
+          }
+          checkActive();
+          const entries = batch.splice(0); bodySize = overhead;
+          const task = embedBatch(entries).catch(error => {
+            if (generation === this.generation) haltCloudflare(cloudIndexError(error));
+          }).finally(() => inFlight.delete(task));
+          inFlight.add(task);
         };
         for (const [key, con] of items) {
           checkActive();
@@ -357,15 +386,15 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
           if (isCloud) {
             let image: CloudflareImage, size: number;
             try {
-              const file = await images.getDCConImage(con);
-              image = await prepareCloudflareImage(file, checkActive);
+              image = await untilAborted(indexController!.signal, async () =>
+                prepareCloudflareImage(await images.getDCConImage(con), checkActive));
               size = JSON.stringify(image).length;
               if (size + overhead > CLOUDFLARE_BODY_LIMIT) throw new CloudflareEmbeddingError('Cloudflare 임베딩 요청 크기 제한을 초과했습니다.');
             } catch (error) {recordError(error); await finish(key); continue;}
-            if (batch.length && bodySize + size + 1 > CLOUDFLARE_BODY_LIMIT) await flush();
+            if (batch.length && bodySize + size + 1 > CLOUDFLARE_BODY_LIMIT) await submit();
             bodySize += size + (batch.length ? 1 : 0);
             batch.push({key, image});
-            if (batch.length >= CLOUDFLARE_BATCH_ITEMS) await flush();
+            if (batch.length >= CLOUDFLARE_BATCH_ITEMS) await submit();
           } else {
             let vector;
             try {
@@ -378,20 +407,22 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
             await finish(key, vector, true);
           }
         }
-        await flush();
+        await submit();
+        await Promise.all(inFlight);
+        checkActive();
         await checkpoint();
         checkActive();
         this.update({phase: this.status.errors ? (usable ? "완료 · 일부 실패" : "오류") : "준비 완료"});
       } catch (error) {
         if (generation !== this.generation) return;
+        if (isCloud) haltCloudflare(cloudIndexError(error));
+        await Promise.all(inFlight);
         try {await checkpoint();} catch {platform.logger.error('discord-dccon', 'Embedding checkpoint failed');}
-        if (generation !== this.generation || cloudFailure) return;
-        const message = isCloud && !(error instanceof CloudflareEmbeddingError)
-          ? 'Cloudflare 이미지 색인에 실패했습니다.' : String((error as Failure).message);
-        if (isCloud && transientFailures >= 3) haltCloudflare(new CloudflareEmbeddingError(message));
-        else this.update({phase: '오류', error: message});
+        if (generation === this.generation) this.update({phase: '오류', file: '',
+          error: isCloud ? cloudFailure!.message : String((error as Failure).message)});
       }
       finally {
+        if (cloudIndexController === indexController) cloudIndexController = undefined;
         if (generation === this.generation) {
           this.indexing = false;
           if (this.reindex) {this.reindex = false; void this.index();}
@@ -402,7 +433,7 @@ export function createEmbedding(platform: Platform, settings: SettingsService, c
     async search(text) {
       const isCloud = this.provider() === 'cloudflare';
       if (isCloud && this.enabled() && !this.hasCloudflareCredentials()) throw Error(CLOUDFLARE_SETUP_HINT);
-      if (!this.ready) throw Error(this.status.error || "모델 준비 중입니다. 설정에서 진행 상태를 확인하세요.");
+      if (!this.ready) throw Error(cloudFailure?.message || this.status.error || "모델 준비 중입니다. 설정에서 진행 상태를 확인하세요.");
       this.cancelSearch();
       const sequence = this.searchSequence, generation = this.generation;
       const checkSearch = () => {
