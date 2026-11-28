@@ -25,7 +25,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
   media: MediaUI;
 }) {
   const {personalCons, getDCConSearchResult, loadPacks} = packs;
-  const {personalURL, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon} = personal;
+  const {personalURL, preparePersonalCon, storePersonalCon, movePersonalCon, removePersonalCon, renamePersonalCon} = personal;
   const {inspectInstantSend} = sending;
   const {DCConImage, PersonalImage, BufferImage, PackThumbnail, Button} = media;
   const getLocaleStrings = () => stringsFor(platform.discord.locale);
@@ -37,7 +37,7 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
 
     constructor(props: Record<string, never>) {
       super(props);
-      this.state = {items: personalCons(), open: false, input: "", title: "", prepared: null, busy: false, message: ""};
+      this.state = {items: personalCons(), open: false, input: "", title: "", prepared: null, busy: false, message: "", editingPath: null, editTitle: ""};
       this.refresh = () => this.setState({items: personalCons()});
     }
     componentDidMount() { PluginEvents.subscribe("DCCON_PERSONAL_UPDATE", this.refresh); }
@@ -99,6 +99,21 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
           "등록된 개별 콘이 없습니다. 이미지 링크로 콘을 추가해 보세요."),
         h("div", {className: "dccon-saved-container"}, s.items.map((con, index) => h(SavedConCard, {
           key: con.path, title: con.title || "개별 콘",
+          titleEditor: s.editingPath === con.path ? h("form", {className: "dccon-personal-rename", onSubmit: event => {
+            event.preventDefault();
+            const title = this.state.editTitle.trim();
+            if (!title || title.length > 100) return;
+            void this.work(async () => {
+              await renamePersonalCon(con, title);
+              if (!this.disposed) this.setState({editingPath: null, editTitle: "", message: "이름을 변경했습니다."});
+            });
+          }},
+            h("input", {"aria-label": "콘 이름", value: s.editTitle, maxLength: 100, autoFocus: true, disabled: s.busy,
+              onChange: e => this.setState({editTitle: (e.target as HTMLInputElement).value}),
+              onKeyDown: e => {if (e.key === "Escape" && !s.busy) {e.preventDefault(); this.setState({editingPath: null, editTitle: "", message: ""});}}}),
+            h("button", {type: "submit", className: "dccon-button", disabled: s.busy || !s.editTitle.trim() || s.editTitle.trim().length > 100}, "저장"),
+            h("button", {type: "button", className: "dccon-button", disabled: s.busy, onClick: () => this.setState({editingPath: null, editTitle: "", message: ""})}, "취소")) : undefined,
+          onRename: s.editingPath === con.path ? undefined : () => this.setState({editingPath: con.path, editTitle: con.title || "", message: ""}),
           thumbnail: h(PersonalImage, {con}),
           isFirst: index === 0, isLast: index === s.items.length - 1, disabled: s.busy,
           onMove: direction => this.work(() => movePersonalCon(con, direction)),
@@ -180,13 +195,14 @@ export function createSettingsUI(platform: Platform, { packs, personal, sending,
     const h = platform.react.createElement;
     return h("div", {className: "dccon-card"}, h("div", {className: "dccon-card-thumbnail"}, props.thumbnail),
       h("div", {className: "dccon-card-content"},
-        h("h3", {title: props.title}, props.title),
+        props.titleEditor || h("h3", {title: props.title}, props.title),
         h("span", {"aria-hidden": !props.description || undefined}, props.description),
         h("div", {className: "dccon-pack-actions"},
           h("div", {className: "dccon-pack-order", role: "group", "aria-label": props.title + " 순서 조절"},
             ...([[-1, "위로", props.isFirst], [1, "아래로", props.isLast]] as const).map(([direction, label, boundary]) =>
               h("button", {key: direction, type: "button", disabled: props.disabled || boundary,
                 "aria-label": props.title + " " + label, onClick: () => props.onMove(direction)}, label))),
+          props.onRename && h("button", {type: "button", className: "dccon-button", disabled: props.disabled, "aria-label": props.title + " 이름 변경", onClick: props.onRename}, "이름 변경"),
           h(Button, {text: getLocaleStrings().settings.remove, color: "dccon-item-error", disabled: props.disabled,
             onClick: props.onRemove, style: {marginLeft: "auto"}}))));
   }

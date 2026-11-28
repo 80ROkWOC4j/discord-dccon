@@ -55,6 +55,47 @@ test('clipboard import previews before saving, persists bytes offline, rejects d
   await assert.rejects(h.getDCConImage(con), {code: 'ENOENT'});
 });
 
+test('rename preserves image, identity and order while refreshing all views by path', async t => {
+  const h = harness(t);
+  await h.storePersonalCon(await h.preparePersonalCon(url), '변경 전');
+  const [con] = h.data.personalCons, other = {...con, idx: 'other', path: 'personal:other', title: '같은 이름'};
+  const file = await h.getDCConImage(con);
+  h.data.personalCons.push(other);
+  h.data.favorites = [other, {...con}]; h.data.recent = [{...con}, other];
+  h.updateQueue('one', [{con, file}]); h.updateQueue('two', [{con, file}, {con: other, file}]);
+  const panel = new h.DCConPanel({type: 'dccon'});
+  panel.componentDidMount();
+  t.after(() => panel.componentWillUnmount());
+  panel.state.semanticResults = [{con, score: 0.8}];
+  panel.state.textFilter = '변경 전';
+  await h.renamePersonalCon(con, '  같은 이름  ');
+  const renamed = {...con, title: '같은 이름'};
+  assert.deepEqual(structuredClone(h.data.personalCons), [renamed, other]);
+  assert.deepEqual(structuredClone(h.data.favorites), [other, renamed]);
+  assert.deepEqual(structuredClone(h.data.recent), [renamed, other]);
+  assert.equal(panel.filterDccons().length, 0);
+  panel.state.textFilter = '같은 이름';
+  assert.equal(panel.filterDccons()[0].detail.length, 2);
+  assert.equal(panel.state.semanticResults[0].con.title, renamed.title);
+  for (const channel of ['one', 'two']) {
+    const [entry] = h.activeQueue(channel);
+    assert.equal(entry.file, file);
+    assert.equal(entry.con.title, renamed.title);
+  }
+  assert.deepEqual(Buffer.from(await (await h.getDCConImage(renamed)).arrayBuffer()), png);
+  assert.equal(h.calls.length, 1);
+});
+
+test('invalid names and missing personal cons cannot overwrite saved metadata', async t => {
+  const h = harness(t), con = {path: 'personal:a', title: '기존'};
+  h.data.personalCons = [con];
+  for (const name of ['  ', '콘'.repeat(101)]) await assert.rejects(h.renamePersonalCon(con, name));
+  await assert.rejects(h.renamePersonalCon({path: 'personal:missing'}, '새 이름'));
+  assert.deepEqual(h.data.personalCons, [con]);
+  await h.renamePersonalCon(con, '콘'.repeat(100));
+  assert.equal(h.data.personalCons[0].title.length, 100);
+});
+
 test('personal order persists, refreshes the picker and leaves references unchanged', async t => {
   const h = harness(t);
   const items = ['첫째', '둘째', '셋째'].map((title, index) => ({idx: String(index), path: 'personal:' + index, title, packageIdx: 'personal-cons'}));

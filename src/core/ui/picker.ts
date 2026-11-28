@@ -1,6 +1,6 @@
 import type {Platform} from '../../platform/types.ts';
 import type * as React from 'react';
-import type {Failure, Pack} from '../types.ts';
+import type {Failure, Pack, SearchResult} from '../types.ts';
 import type {ChannelProps, ItemProps, PanelProps, PanelState} from '../ui-types.ts';
 import type {SettingsService} from '../settings.ts';
 import type {Packs} from '../packs.ts';
@@ -26,6 +26,14 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
   const {activeQueue, removeBuffered, sendDCConMessage} = sending;
   const {DCConImage, PersonalImage, BufferImage, PackThumbnail, ManduIcon} = media;
   const getLocaleStrings = () => stringsFor(platform.discord.locale);
+  function currentResults(results: SearchResult[]) {
+    const personal = new Map(personalCons().map(con => [con.path, con]));
+    return results.flatMap(result => {
+      if (!result.con.path.startsWith("personal:")) return [result];
+      const con = personal.get(result.con.path);
+      return con ? [{...result, con}] : [];
+    });
+  }
   class BufferTray extends platform.react.Component<ChannelProps, {mergeReady: boolean; mergeReason: string}> {
     declare mergeSequence: number;
     declare mergeFiles?: File[];
@@ -275,8 +283,7 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       super(props);
       this.state = { textFilter: "", selected: "all", dccons: pickerPacks() };
       this.personalRefresh = () => {
-        this.setState({dccons: pickerPacks(), semanticResults: (this.state.semanticResults || []).filter(({con}) =>
-          !con.path.startsWith("personal:") || personalCons().some(item => item.path === con.path))});
+        this.setState({dccons: pickerPacks(), semanticResults: currentResults(this.state.semanticResults || [])});
       };
       this.clearSearch = () => this.changeSearch("");
       this.refresh = () => this.setState({ revision: (this.state.revision ?? 0) + 1 });
@@ -318,7 +325,7 @@ export function createPickerUI(platform: Platform, { settings, packs, images, se
       this.searchTimer = setTimeout(async () => {
         try {
           const semanticResults = await Embedding.search(text.trim());
-          if (this.mounted && generation === this.searchGeneration) this.setState({semanticResults, searching: false});
+          if (this.mounted && generation === this.searchGeneration) this.setState({semanticResults: currentResults(semanticResults), searching: false});
         } catch (_error) { const error = _error as Failure;
           if (this.mounted && generation === this.searchGeneration) this.setState({searchError: String(error.message), searching: false});
         }

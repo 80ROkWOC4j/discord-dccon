@@ -15,6 +15,9 @@ export function createSending(platform: Platform, settings: SettingsService, ima
     queuedCons.set(channelId, entries);
     PluginEvents.dispatch({ type: "DCCON_BUFFER_UPDATE", channelId });
   }
+  function currentCon(con: Con) {
+    return con.path.startsWith("personal:") ? loadData("personalCons", []).find(item => item.path === con.path) ?? con : con;
+  }
   function removeBuffered(channelId: string, entry?: QueueEntry) {
     if (sendingChannels.has(channelId)) return;
     updateQueue(channelId, entry ? activeQueue(channelId).filter(item => item !== entry) : []);
@@ -156,7 +159,7 @@ export function createSending(platform: Platform, settings: SettingsService, ima
         let sentCons = [con!];
         if (keepOpen) {
           markSend(attempt, "버퍼 추가");
-          updateQueue(channelId, [...activeQueue(channelId), {file: image!, con: con!}]);
+          updateQueue(channelId, [...activeQueue(channelId), {file: image!, con: currentCon(con!)}]);
           markSend(attempt, "완료", { outcome: "버퍼 누적 완료", queuedCount: activeQueue(channelId).length });
         } else {
           const queued = activeQueue(channelId);
@@ -185,7 +188,7 @@ export function createSending(platform: Platform, settings: SettingsService, ima
         }
         if (sending) {
           let recent = loadData("recent", []);
-          for (const item of sentCons) recent = [item, ...recent.filter(entry => entry.path !== item.path)].slice(0, 20);
+          for (const item of sentCons) recent = [currentCon(item), ...recent.filter(entry => entry.path !== item.path)].slice(0, 20);
           saveData("recent", recent);
           PluginEvents.dispatch({ type: "DCCON_RECENT_UPDATE" });
         }
@@ -221,6 +224,12 @@ export function createSending(platform: Platform, settings: SettingsService, ima
   return {activeQueue, updateQueue, removeBuffered, sendDCConMessage, sendImagesDirectly, inspectInstantSend,
     isSending: (channelId: string) => sendingChannels.has(channelId),
     isSendingCon: (con: Con) => [...sendingChannels].some(channel => activeQueue(channel).some(entry => entry.con.path === con.path)),
+    renameQueuedCon(con: Con, title: string) {
+      for (const [channel, entries] of queuedCons) {
+        if (entries.some(entry => entry.con.path === con.path))
+          updateQueue(channel, entries.map(entry => entry.con.path === con.path ? {...entry, con: {...entry.con, title}} : entry));
+      }
+    },
     removeQueuedCon(con: Con) {for (const [channel, entries] of queuedCons) updateQueue(channel, entries.filter(entry => entry.con.path !== con.path));},
     getCurrentChannel: () => currentChannelId,
     setCurrentChannel: (channelId: string) => {currentChannelId = channelId;},

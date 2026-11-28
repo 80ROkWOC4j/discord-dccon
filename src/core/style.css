@@ -129,6 +129,11 @@
 .dccon-personal-form label { display: grid; gap: 6px; }
 .dccon-personal-form input { width: 100%; min-width: 0; padding: 8px; border: 1px solid #80808033; border-radius: 4px; background: var(--dc-inset); }
 .dccon-personal-actions { display: flex; gap: 8px; }
+.dccon-card-content:has(.dccon-personal-rename) { height: auto; min-height: 72px; }
+.dccon-card-content:has(.dccon-personal-rename) > span { display: none; }
+.dccon-personal-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.dccon-personal-rename input { flex: 1 1 120px; min-width: 0; width: 100%; padding: 7px 8px; border: 1px solid #80808066; border-radius: 4px; background: var(--dc-inset); color: inherit; }
+.dccon-personal-rename input:focus { outline: 2px solid var(--dc-accent); }
 .dccon-personal p { margin: 12px 0; color: var(--dc-muted); }
 .dccon-personal p:empty { display: none; }
 .dccon-personal-preview { width: 72px; height: 72px; flex-shrink: 0; }
